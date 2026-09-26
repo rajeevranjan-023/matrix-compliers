@@ -1,4 +1,4 @@
-const BASE = "/api";
+const BASE = "https://matrix-compliers-backend.onrender.com/api";
 
 export async function fetchLocations() {
   const res = await fetch(`${BASE}/locations`);
