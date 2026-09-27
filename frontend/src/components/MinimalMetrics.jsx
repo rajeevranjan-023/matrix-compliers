@@ -1,21 +1,18 @@
 import React from "react";
 
 export default function MinimalMetrics({ data }) {
-  const simulation = data?.simulation || {};
-  const score = data?.score || {};
+  const comfortScore = data?.comfortScore || {};
   const sustainability = data?.sustainability || {};
-  const suggestions = data?.suggestions || [];
-
-  const om = simulation?.optimizedMetrics || {};
+  const om = data?.simulation?.optimizedMetrics || {};
 
   const rows = [
-    ["Night min", om?.min ? `${om.min.toFixed(1)}°C` : "--"],
-    ["Day max", om?.max ? `${om.max.toFixed(1)}°C` : "--"],
-    ["Swing", om?.swingIn ? `${om.swingIn.toFixed(1)}°C` : "--"],
-    ["Retention", om?.retention ? `${Math.round(om.retention)}%` : "--"],
-    ["Insulation", score?.insulationScore ? `${score.insulationScore}/100` : "--"],
-    ["Ventilation", score?.ventilationScore ? `${score.ventilationScore}/100` : "--"],
-    ["Solar match", score?.solarScore ? `${score.solarScore}/100` : "--"],
+    ["Night min", om?.min != null ? `${om.min.toFixed(1)}°C` : "--"],
+    ["Day max", om?.max != null ? `${om.max.toFixed(1)}°C` : "--"],
+    ["Swing", om?.swingIn != null ? `${om.swingIn.toFixed(1)}°C` : "--"],
+    ["Retention", om?.retention != null ? `${Math.round(om.retention)}%` : "--"],
+    ["Insulation", comfortScore?.insulationScore != null ? `${comfortScore.insulationScore}/100` : "--"],
+    ["Ventilation", comfortScore?.ventilationScore != null ? `${comfortScore.ventilationScore}/100` : "--"],
+    ["Solar match", comfortScore?.solarScore != null ? `${comfortScore.solarScore}/100` : "--"],
     ["kWh saved/day", sustainability?.savedKWh ?? "--"],
   ];
 
@@ -27,20 +24,6 @@ export default function MinimalMetrics({ data }) {
           <span className="font-mono text-[13.5px] font-semibold">{val}</span>
         </div>
       ))}
-
-      {suggestions.length > 0 && (
-        <div className="pt-2">
-          <div className="text-muted text-[11px] uppercase tracking-wide mb-1.5">
-            Suggestions
-          </div>
-
-          {suggestions.map((s, idx) => (
-            <div key={idx} className="text-[11.5px] text-muted leading-snug mb-1.5">
-              <b className="text-sage">+{s.scoreGain || 0}pt</b> — {s.label || "Improvement"}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

@@ -16,7 +16,9 @@ const COLD = { r: 0x3a, g: 0x7c, b: 0xd4 };
 const NORMAL = { r: 0xe8, g: 0xc9, b: 0x4a };
 const HOT = { r: 0xe0, g: 0x40, b: 0x2e };
 const SPEEDS = [1, 2, 4];
+const WRONG_ROTATION = Math.PI * 0.62;
 
+let GLOW_TEX = null;
 function glowTexture() {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
@@ -31,15 +33,74 @@ function glowTexture() {
   tex.needsUpdate = true;
   return tex;
 }
-let GLOW_TEX = null;
+
+function safeNum(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function metricsFromArray(arr) {
+  const clean = Array.isArray(arr) && arr.length ? arr.filter((v) => Number.isFinite(v)) : [18, 22];
+  const min = Math.min(...clean), max = Math.max(...clean);
+  return { min, max, swingIn: max - min, retention: 50 };
+}
+
+function normalizeData(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const geometry = raw.geometry || {};
+  const width = safeNum(geometry.width, 6);
+  const length = safeNum(geometry.length, 5);
+  const floors = Math.max(1, Math.round(safeNum(geometry.floors, 1)));
+  const roomHeight = safeNum(geometry.roomHeight, 3);
+  const totalHeight = safeNum(geometry.totalHeight, roomHeight * floors);
+  const footprint = safeNum(geometry.footprint, width * length);
+  const floorArea = safeNum(geometry.floorArea, footprint);
+  const wallArea = safeNum(geometry.wallArea, 2 * (width + length) * totalHeight);
+  const azimuth = safeNum(geometry.azimuth, 180);
+
+  const defaultParams = (mult) => ({ uWall: 1.2 * mult, uRoof: 1.5 * mult, uWindow: 2.8, windowArea: Math.max(1, footprint * 0.12), ach: 1.2 * mult });
+  const dpRaw = raw.designParams || {};
+  const fillParams = (p, mult) => {
+    const merged = { ...defaultParams(mult), ...(p || {}) };
+    return {
+      uWall: safeNum(merged.uWall, 1.2 * mult), uRoof: safeNum(merged.uRoof, 1.5 * mult),
+      uWindow: safeNum(merged.uWindow, 2.8), windowArea: Math.max(0.5, safeNum(merged.windowArea, footprint * 0.12)),
+      ach: safeNum(merged.ach, 1.2 * mult),
+    };
+  };
+  const baseline = fillParams(dpRaw.baseline, 1.6);
+  const optimized = fillParams(dpRaw.optimized, 1);
+
+  const hours = Array.isArray(raw.simulation?.hours) && raw.simulation.hours.length === 24 ? raw.simulation.hours : Array.from({ length: 24 }, (_, i) => i);
+  const fallbackOutdoor = hours.map((h) => 15 + 8 * Math.sin(((h - 6) / 24) * Math.PI * 2));
+  const outdoor = Array.isArray(raw.simulation?.outdoor) && raw.simulation.outdoor.length === 24 ? raw.simulation.outdoor : fallbackOutdoor;
+  const baselineIndoor = Array.isArray(raw.simulation?.baselineIndoor) && raw.simulation.baselineIndoor.length === 24 ? raw.simulation.baselineIndoor : outdoor.map((v) => v - 1);
+  const optimizedIndoor = Array.isArray(raw.simulation?.optimizedIndoor) && raw.simulation.optimizedIndoor.length === 24 ? raw.simulation.optimizedIndoor : outdoor.map((v) => v + 2);
+  const baselineMetrics = raw.simulation?.baselineMetrics || metricsFromArray(baselineIndoor);
+  const optimizedMetrics = raw.simulation?.optimizedMetrics || metricsFromArray(optimizedIndoor);
+
+  return {
+    ...raw,
+    geometry: { ...geometry, width, length, floors, roomHeight, totalHeight, footprint, floorArea, wallArea, azimuth },
+    designParams: { baseline, optimized },
+    inputs: { desiredTemp: 21, special: {}, roofType: "flat", roofMaterial: "concrete", ventilationType: "natural", wallThicknessMM: 300, ...(raw.inputs || {}) },
+    classification: raw.classification || { key: "composite", label: "Composite climate" },
+    comparison: { nightTemperatureGain: 0, energySavingPercent: 0, isCold: true, headlineGain: 0, ...(raw.comparison || {}) },
+    comfortScore: { overall: 0, insulationScore: 0, ventilationScore: 0, solarScore: 0, suggestions: [], ...(raw.comfortScore || {}) },
+    baselineScore: { overall: 0, ...(raw.baselineScore || {}) },
+    simulation: { hours, outdoor, baselineIndoor, optimizedIndoor, baselineMetrics, optimizedMetrics },
+  };
+}
 
 function uaShares(params, geometry) {
+  const roofArea = geometry.footprint || geometry.floorArea || 1;
+  const volume = (geometry.footprint || geometry.floorArea || 1) * (geometry.totalHeight || geometry.roomHeight || 3);
   const wallUA = params.uWall * geometry.wallArea;
-  const roofUA = params.uRoof * geometry.roofArea;
+  const roofUA = params.uRoof * roofArea;
   const winUA = params.uWindow * params.windowArea;
-  const infUA = 0.33 * params.ach * geometry.volume;
+  const infUA = 0.33 * params.ach * volume;
   const total = wallUA + roofUA + winUA + infUA || 1;
-  return { wall: wallUA / total, roof: roofUA / total, window: winUA / total };
+  return { wall: wallUA / total, roof: roofUA / total, window: winUA / total, total };
 }
 function tempColor(t) {
   t = Math.max(0, Math.min(1, t));
@@ -62,293 +123,322 @@ function timeLabel(h) {
   if (h >= 18 && h < 21) return "Evening";
   return "Night";
 }
+function useCountUp(target, decimals = 0) {
+  const [val, setVal] = useState(0);
+  const raf = useRef(null);
+  const from = useRef(0);
+  useEffect(() => {
+    const start = performance.now();
+    const base = from.current;
+    const dur = 650;
+    function step(now) {
+      const t = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const v = base + (target - base) * eased;
+      setVal(v);
+      if (t < 1) raf.current = requestAnimationFrame(step);
+      else from.current = target;
+    }
+    raf.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf.current);
+    // eslint-disable-next-line
+  }, [target]);
+  return Number(val.toFixed(decimals));
+}
 
-export default function Building3D({ data, view }) {
-  const wrapRef = useRef(null);
-  const tooltipRef = useRef(null);
-  const sceneRef = useRef(null);
-  const cameraRef = useRef(null);
-  const rendererRef = useRef(null);
+function makeSide(wrapEl) {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0d1826);
+  scene.fog = new THREE.Fog(0x0d1826, 26, 50);
+
+  const camera = new THREE.PerspectiveCamera(45, wrapEl.clientWidth / Math.max(1, wrapEl.clientHeight), 0.1, 200);
+  camera.position.set(13, 10, 15);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(wrapEl.clientWidth, wrapEl.clientHeight);
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  wrapEl.appendChild(renderer.domElement);
+
+  const ambientLight = new THREE.AmbientLight(0xa9c0d6, 0.6);
+  scene.add(ambientLight);
+  const hemi = new THREE.HemisphereLight(0x9fc7e8, 0x1a2436, 0.4);
+  scene.add(hemi);
+  const fillLight = new THREE.DirectionalLight(0x9fc7e8, 0.28);
+  fillLight.position.set(-10, 6, -8);
+  scene.add(fillLight);
+  const sunLight = new THREE.DirectionalLight(0xffe3b0, 1.15);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(2048, 2048);
+  sunLight.shadow.bias = -0.0015;
+  sunLight.shadow.camera.left = -20; sunLight.shadow.camera.right = 20;
+  sunLight.shadow.camera.top = 20; sunLight.shadow.camera.bottom = -20;
+  scene.add(sunLight, sunLight.target);
+
+  const sunMesh = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xffdca0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  sunMesh.scale.set(3, 3, 1);
+  scene.add(sunMesh);
+
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(28, 40), new THREE.MeshStandardMaterial({ color: 0x16233a, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.02;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const buildingGroup = new THREE.Group();
+  scene.add(buildingGroup);
+
+  const interiorGlow = new THREE.PointLight(0xffb35a, 0, 6, 2);
+  buildingGroup.add(interiorGlow);
+  const interiorSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xffb35a, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  interiorSprite.scale.set(2.4, 2.4, 1);
+  buildingGroup.add(interiorSprite);
+
+  const heatLossGroup = new THREE.Group();
+  const airflowGroup = new THREE.Group();
+  const solarRayGroup = new THREE.Group();
+  const sectionGroup = new THREE.Group();
+  const weatherGroup = new THREE.Group();
+  sectionGroup.visible = false;
+  buildingGroup.add(heatLossGroup, airflowGroup, solarRayGroup);
+  scene.add(sectionGroup, weatherGroup);
+
+  return {
+    wrapEl, scene, camera, renderer, ambientLight, sunLight, sunMesh, ground,
+    buildingGroup, interiorGlow, interiorSprite, heatLossGroup, airflowGroup, solarRayGroup, sectionGroup, weatherGroup,
+    hoverable: [], dims: {}, ventAnchors: [], windowAnchors: [],
+  };
+}
+
+function disposeGroup(group) {
+  while (group.children.length) {
+    const c = group.children.pop();
+    if (c.children?.length) disposeGroup(c);
+    c.geometry?.dispose?.();
+    c.material?.dispose?.();
+  }
+}
+
+export default function Building3D({ data: rawData, view }) {
+  const data = useMemo(() => normalizeData(rawData), [rawData]);
+  const containerRef = useRef(null);
+  const wrapLRef = useRef(null);
+  const wrapRRef = useRef(null);
+  const overlayRef = useRef(null);
+  const sidesRef = useRef({ L: null, R: null });
   const controlsRef = useRef(null);
-  const buildingGroupRef = useRef(null);
-  const sunLightRef = useRef(null);
-  const ambientLightRef = useRef(null);
-  const sunMeshRef = useRef(null);
-  const raycasterRef = useRef(new THREE.Raycaster());
-  const pointerRef = useRef(new THREE.Vector2());
-  const hoverableRef = useRef([]);
   const frameRef = useRef(null);
-  const transitionRef = useRef(null);
-  const airflowGroupRef = useRef(null);
-  const heatGroupRef = useRef(null);
-  const particlesRef = useRef([]);
-  const sunDirRef = useRef(new THREE.Vector3(0, 1, 0));
-  const selectedRef = useRef(null);
+  const transitionRef = useRef({ L: null, R: null });
   const clockRef = useRef({ start: performance.now() });
+  const sunDirRef = useRef(new THREE.Vector3(0, 1, 0));
 
+  const [ready, setReady] = useState(false);
   const [hour, setHour] = useState(12);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [hoverLabel, setHoverLabel] = useState(null);
-  const [pinnedLabel, setPinnedLabel] = useState(null);
-  const [designMode, setDesignMode] = useState("optimized");
+  const [showSection, setShowSection] = useState(false);
+  const [hoverLabel, setHoverLabel] = useState({ L: null, R: null });
   const [insightIdx, setInsightIdx] = useState(0);
-  const playTimer = useRef(null);
-
-  const activeParams = data?.designParams?.[designMode];
-  const otherMode = designMode === "optimized" ? "baseline" : "optimized";
-
-  const insights = useMemo(() => {
-    if (!data) return [];
-    const { classification, comparison, comfortScore, inputs, simulation } = data;
-    const list = [];
-    const indoorNow = (designMode === "optimized" ? simulation?.optimizedIndoor : simulation?.baselineIndoor)?.[hour];
-    const outdoorNow = simulation?.outdoor?.[hour];
-    if (hour >= 10 && hour <= 15) {
-      list.push(`Solar gain concentrated on the ${classification?.key?.startsWith("cold") ? "south" : "sun-facing"} wall right now.`);
-    } else {
-      list.push(`Heat is escaping through the roof and walls — the biggest loss path at night.`);
-    }
-    if (comparison) {
-      list.push(`Optimized design stays ${Math.abs(comparison.nightTemperatureGain)}°C ${comparison.nightTemperatureGain >= 0 ? "warmer" : "cooler"} at night than the baseline.`);
-      list.push(`Roughly ${comparison.energySavingPercent}% less heating/cooling load than an unoptimized baseline build.`);
-    }
-    if (comfortScore?.insulationScore < 65) list.push("Insulation score is low — consider thicker walls or a better U-value.");
-    if (comfortScore?.ventilationScore != null) list.push(`Ventilation match is ${comfortScore.ventilationScore}/100 for this climate.`);
-    if (inputs?.ventilationType !== "none") list.push(`${inputs?.ventilationType === "mechanical" ? "Mechanical" : "Natural"} ventilation reduces indoor overheating risk.`);
-    if (indoorNow != null && outdoorNow != null) {
-      const diff = (indoorNow - outdoorNow).toFixed(1);
-      list.push(`Indoor is ${diff > 0 ? diff + "°C warmer" : Math.abs(diff) + "°C cooler"} than outdoor air right now.`);
-    }
-    return list;
-  }, [data, hour, designMode]);
+  const [sceneError, setSceneError] = useState(false);
 
   useEffect(() => {
-    if (insights.length < 2) return;
-    const t = setInterval(() => setInsightIdx((i) => (i + 1) % insights.length), 4200);
-    return () => clearInterval(t);
-  }, [insights.length]);
-
-  useEffect(() => {
+    if (!data) return;
+    try {
+    const wrapL = wrapLRef.current, wrapR = wrapRRef.current, overlay = overlayRef.current;
     GLOW_TEX = GLOW_TEX || glowTexture();
-    const wrap = wrapRef.current;
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0d1826);
-    scene.fog = new THREE.Fog(0x0d1826, 28, 55);
 
-    const camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / Math.max(1, wrap.clientHeight), 0.1, 200);
-    camera.position.set(13, 10, 15);
+    const L = makeSide(wrapL);
+    const R = makeSide(wrapR);
+    sidesRef.current = { L, R };
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(wrap.clientWidth, wrap.clientHeight);
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    wrap.appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
+    const controls = new OrbitControls(L.camera, overlay);
     controls.target.set(0, 2, 0);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.minDistance = 6; controls.maxDistance = 45;
     controls.maxPolarAngle = Math.PI * 0.49;
-
-    const ambientLight = new THREE.AmbientLight(0xa9c0d6, 0.65);
-    scene.add(ambientLight);
-    const hemi = new THREE.HemisphereLight(0x9fc7e8, 0x1a2436, 0.4);
-    scene.add(hemi);
-    const sunLight = new THREE.DirectionalLight(0xffe3b0, 1.15);
-    sunLight.castShadow = true;
-    sunLight.shadow.mapSize.set(1024, 1024);
-    sunLight.shadow.camera.left = -20; sunLight.shadow.camera.right = 20;
-    sunLight.shadow.camera.top = 20; sunLight.shadow.camera.bottom = -20;
-    scene.add(sunLight, sunLight.target);
-
-    const sunMesh = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xffdca0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-    sunMesh.scale.set(3, 3, 1);
-    scene.add(sunMesh);
-    sunMeshRef.current = sunMesh;
-
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(30, 48),
-      new THREE.MeshStandardMaterial({ color: 0x16233a, roughness: 1 })
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.02;
-    ground.receiveShadow = true;
-    scene.add(ground);
-
-    const ringGeo = new THREE.RingGeometry(6.6, 7, 48);
-    const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xe8934a, transparent: true, opacity: 0.12, side: THREE.DoubleSide }));
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.0;
-    scene.add(ring);
-
-    [[0, 0, 1, 0x6fa8c9, "N"], [1, 0, 0, 0x8fa0b5, "E"], [0, 0, -1, 0xd46a3e, "S"], [-1, 0, 0, 0x8fa0b5, "W"]].forEach(([x, , z, color]) => {
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), new THREE.MeshBasicMaterial({ color }));
-      dot.position.set(x * 13, 0.1, z * 13);
-      scene.add(dot);
-    });
-
-    const buildingGroup = new THREE.Group();
-    scene.add(buildingGroup);
-
-    sceneRef.current = scene; cameraRef.current = camera; rendererRef.current = renderer;
-    controlsRef.current = controls; buildingGroupRef.current = buildingGroup;
-    sunLightRef.current = sunLight; ambientLightRef.current = ambientLight;
+    controlsRef.current = controls;
 
     function onResize() {
-      if (!wrap || !renderer) return;
-      camera.aspect = wrap.clientWidth / Math.max(1, wrap.clientHeight);
-      camera.updateProjectionMatrix();
-      renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+      [L, R].forEach((s) => {
+        if (!s.wrapEl) return;
+        s.camera.aspect = s.wrapEl.clientWidth / Math.max(1, s.wrapEl.clientHeight);
+        s.camera.updateProjectionMatrix();
+        s.renderer.setSize(s.wrapEl.clientWidth, s.wrapEl.clientHeight);
+      });
     }
     window.addEventListener("resize", onResize);
+    onResize();
 
-    function onPointerMove(e) {
-      const rect = wrap.getBoundingClientRect();
-      pointerRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      pointerRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      const tip = tooltipRef.current;
-      if (tip) { tip.style.left = `${e.clientX - rect.left + 14}px`; tip.style.top = `${e.clientY - rect.top + 10}px`; }
+    function pickSide(clientX, clientY) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const half = rect.width / 2;
+      const isLeft = clientX - rect.left < half;
+      const side = isLeft ? "L" : "R";
+      const s = sidesRef.current[side];
+      const subLeft = isLeft ? rect.left : rect.left + half;
+      const x = ((clientX - subLeft) / half) * 2 - 1;
+      const y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      return { side, s, x, y };
     }
-    wrap.addEventListener("pointermove", onPointerMove);
 
-    function onClick() {
-      raycasterRef.current.setFromCamera(pointerRef.current, camera);
-      const hits = raycasterRef.current.intersectObjects(hoverableRef.current, false);
+    const raycaster = new THREE.Raycaster();
+    function onPointerMove(e) {
+      const { side, s, x, y } = pickSide(e.clientX, e.clientY);
+      raycaster.setFromCamera({ x, y }, s.camera);
+      const hits = raycaster.intersectObjects(s.hoverable, false);
       if (hits.length && hits[0].object.userData.label) {
-        if (selectedRef.current) selectedRef.current.material.emissiveIntensity = selectedRef.current.userData.baseEmissive ?? 0;
-        selectedRef.current = hits[0].object;
-        setPinnedLabel(hits[0].object.userData.label);
+        setHoverLabel((prev) => ({ ...prev, [side]: hits[0].object.userData.label }));
+        overlay.style.cursor = "pointer";
       } else {
-        if (selectedRef.current) selectedRef.current.material.emissiveIntensity = selectedRef.current.userData.baseEmissive ?? 0;
-        selectedRef.current = null;
-        setPinnedLabel(null);
+        setHoverLabel((prev) => ({ ...prev, [side]: null }));
+        overlay.style.cursor = "grab";
       }
     }
-    wrap.addEventListener("click", onClick);
+    overlay.addEventListener("pointermove", onPointerMove);
 
     function animate() {
       frameRef.current = requestAnimationFrame(animate);
-      controls.update();
-      const elapsed = (performance.now() - clockRef.current.start) / 1000;
+      try {
+        controls.update();
+        R.camera.position.copy(L.camera.position);
+        R.camera.quaternion.copy(L.camera.quaternion);
+        R.camera.zoom = L.camera.zoom;
+        R.camera.updateProjectionMatrix();
 
-      const tr = transitionRef.current;
-      if (tr) {
-        const t = Math.min(1, (performance.now() - tr.start) / 300);
-        tr.entries.forEach(({ mesh, from, to }) => { mesh.material.color.copy(lerpColor(from, to, t)); });
-        if (t >= 1) transitionRef.current = null;
-      }
-
-      raycasterRef.current.setFromCamera(pointerRef.current, camera);
-      const hits = raycasterRef.current.intersectObjects(hoverableRef.current, false);
-      if (hits.length && hits[0].object.userData.label) {
-        setHoverLabel(hits[0].object.userData.label);
-        wrap.style.cursor = "pointer";
-      } else {
-        setHoverLabel(null);
-        wrap.style.cursor = "grab";
-      }
-
-      if (selectedRef.current) {
-        selectedRef.current.material.emissiveIntensity = 0.55 + Math.sin(elapsed * 4) * 0.25;
-      }
-
-      if (airflowGroupRef.current) {
-        airflowGroupRef.current.children.forEach((p) => {
-          const ud = p.userData;
-          ud.t = (ud.t + 0.006 * (ud.speed || 1)) % 1;
-          p.position.lerpVectors(ud.from, ud.to, ud.t);
-          p.position.y += Math.sin(ud.t * Math.PI) * (ud.arc || 0);
-          p.material.opacity = 0.85 * Math.sin(Math.max(0.001, ud.t) * Math.PI);
-        });
-      }
-
-      if (heatGroupRef.current) {
-        heatGroupRef.current.children.forEach((p) => {
-          const ud = p.userData;
-          ud.t += 0.01 * (ud.speed || 1);
-          if (ud.t > 1) ud.t = 0;
-          if (ud.mode === "rise") {
-            p.position.y = ud.baseY + ud.t * ud.height;
-            p.position.x = ud.baseX + Math.sin(ud.t * 6 + ud.seed) * 0.12;
-            p.material.opacity = 0.7 * (1 - ud.t);
-          } else {
-            p.position.lerpVectors(ud.from, ud.to, ud.t);
-            p.material.opacity = 0.9 * Math.sin(Math.max(0.001, ud.t) * Math.PI);
+        const elapsed = (performance.now() - clockRef.current.start) / 1000;
+        ["L", "R"].forEach((side) => {
+          const s = sidesRef.current[side];
+          if (!s) return;
+          const tr = transitionRef.current[side];
+          if (tr) {
+            const t = Math.min(1, (performance.now() - tr.start) / 300);
+            tr.entries.forEach(({ mesh, from, to }) => mesh.material?.color?.copy(lerpColor(from, to, t)));
+            if (t >= 1) transitionRef.current[side] = null;
           }
+          s.heatLossGroup.children.forEach((p) => {
+            const ud = p.userData;
+            if (!ud || !ud.from || !ud.dir) return;
+            ud.t += 0.012 * (ud.speed || 1);
+            if (ud.t > 1) ud.t = 0;
+            p.position.copy(ud.from).addScaledVector(ud.dir, ud.t * ud.dist);
+            p.material.opacity = ud.baseOpacity * (1 - ud.t);
+          });
+          s.airflowGroup.children.forEach((p) => {
+            const ud = p.userData;
+            if (!ud || !ud.from || !ud.to) return;
+            ud.t = (ud.t + 0.008 * (ud.speed || 1)) % 1;
+            p.position.lerpVectors(ud.from, ud.to, ud.t);
+            p.position.y += Math.sin(ud.t * Math.PI) * (ud.arc || 0);
+            p.material.opacity = 0.85 * Math.sin(Math.max(0.001, ud.t) * Math.PI);
+          });
+          s.solarRayGroup.children.forEach((p) => {
+            const ud = p.userData;
+            if (!ud || !ud.from || !ud.to) return;
+            ud.t = (ud.t + 0.01 * (ud.speed || 1)) % 1;
+            p.position.lerpVectors(ud.from, ud.to, ud.t);
+            p.material.opacity = ud.baseOpacity * Math.sin(Math.max(0.001, ud.t) * Math.PI);
+          });
+          s.weatherGroup.children.forEach((p) => {
+            const ud = p.userData;
+            if (ud.kind === "snow") {
+              p.position.y -= 0.012 * ud.speed;
+              p.position.x += Math.sin(elapsed * 0.6 + ud.seed) * 0.004;
+              if (p.position.y < -0.1) p.position.y = 9 + Math.random();
+            } else if (ud.kind === "wind") {
+              p.position.x += 0.04 * ud.speed;
+              p.material.opacity = 0.35 * Math.sin((elapsed + ud.t) * 2 % Math.PI);
+              if (p.position.x > 9) p.position.x = -9 - Math.random() * 4;
+            } else if (ud.kind === "heatwave") {
+              ud.t += 0.006 * ud.speed;
+              if (ud.t > 1) ud.t = 0;
+              p.position.y = ud.baseY + ud.t * 2.2;
+              p.position.x += Math.sin(elapsed * 1.4 + ud.seed) * 0.003;
+              p.material.opacity = 0.18 * (1 - ud.t);
+            }
+          });
         });
-      }
 
-      renderer.render(scene, camera);
+        L.renderer.render(L.scene, L.camera);
+        R.renderer.render(R.scene, R.camera);
+      } catch (err) {
+        console.error("Building3D animate frame error:", err);
+      }
     }
     animate();
+    setReady(true);
 
     return () => {
       window.removeEventListener("resize", onResize);
-      wrap.removeEventListener("pointermove", onPointerMove);
-      wrap.removeEventListener("click", onClick);
+      overlay.removeEventListener("pointermove", onPointerMove);
       cancelAnimationFrame(frameRef.current);
       controls.dispose();
-      renderer.dispose();
-      if (wrap && renderer.domElement.parentNode === wrap) wrap.removeChild(renderer.domElement);
+      [L, R].forEach((s) => {
+        disposeGroup(s.scene);
+        s.renderer.dispose();
+        if (s.wrapEl && s.renderer.domElement.parentNode === s.wrapEl) s.wrapEl.removeChild(s.renderer.domElement);
+      });
+      setReady(false);
     };
-  }, []);
-
-  useEffect(() => {
-    if (!data || !buildingGroupRef.current) return;
-    rebuildBuilding();
-    updateSun(hour);
-    recolorForView();
+    } catch (err) {
+      console.error("Building3D scene setup error:", err);
+      setSceneError(true);
+      return () => {};
+    }
     // eslint-disable-next-line
-  }, [data, designMode]);
+  }, [data]);
 
   useEffect(() => {
-    if (!data || !buildingGroupRef.current) return;
-    recolorForView();
+    if (!ready || !data) return;
+    rebuildSide("L", "baseline");
+    rebuildSide("R", "optimized");
+    buildWeather("L");
+    buildWeather("R");
+    updateSun(hour);
+    recolor();
+    // eslint-disable-next-line
+  }, [ready, data]);
+
+  useEffect(() => {
+    if (!ready || !data) return;
+    recolor();
     // eslint-disable-next-line
   }, [view]);
 
-  useEffect(() => { if (data) { updateSun(hour); recolorForView(); } /* eslint-disable-next-line */ }, [hour]);
+  useEffect(() => {
+    if (!ready || !data) return;
+    updateSun(hour);
+    recolor();
+    // eslint-disable-next-line
+  }, [hour]);
 
   useEffect(() => {
-    if (!playing) { clearTimeout(playTimer.current); return; }
-    playTimer.current = setTimeout(() => setHour((h) => (h + 1) % 24), 480 / speed);
-    return () => clearTimeout(playTimer.current);
+    const s = sidesRef.current;
+    if (!s.L || !s.R) return;
+    s.L.sectionGroup.visible = showSection;
+    s.R.sectionGroup.visible = showSection;
+  }, [showSection]);
+
+  useEffect(() => {
+    if (!playing) return;
+    const t = setTimeout(() => setHour((h) => (h + 1) % 24), 480 / speed);
+    return () => clearTimeout(t);
   }, [playing, hour, speed]);
 
-  function clearBuilding() {
-    const group = buildingGroupRef.current;
-    while (group.children.length) {
-      const c = group.children.pop();
-      c.geometry?.dispose?.();
-      c.material?.dispose?.();
-    }
-    hoverableRef.current = [];
-    airflowGroupRef.current = null;
-    heatGroupRef.current = null;
-    selectedRef.current = null;
-  }
+  const uaTotals = useMemo(() => {
+    if (!data) return { baseline: 1, optimized: 1 };
+    return {
+      baseline: uaShares(data.designParams.baseline, data.geometry).total,
+      optimized: uaShares(data.designParams.optimized, data.geometry).total,
+    };
+  }, [data]);
 
-  function facadeColorFor(part, view, classification, shares) {
-    if (view === "thermal") {
-      if (part === "wall") return heatColor(shares.wall);
-      if (part === "roof") return heatColor(shares.roof);
-      if (part === "window") return heatColor(shares.window);
-    }
-    if (part === "wall") return CLIMATE_WALL_COLOR[classification.key];
-    if (part === "roof") return ROOF_MATERIAL_STYLE[data.inputs.roofMaterial]?.color ?? 0x8a7a63;
-    if (part === "window") return 0x9fd6ee;
-    return 0xffffff;
-  }
-
-  function addWallFace(group, opts) {
+  function addWallFace(side, opts) {
+    const s = sidesRef.current[side];
     const { w, h, thickness, normal, pos, color, label } = opts;
-    const geo = normal === "z"
-      ? new THREE.BoxGeometry(w, h, thickness)
-      : new THREE.BoxGeometry(thickness, h, w);
+    const geo = normal === "z" ? new THREE.BoxGeometry(w, h, thickness) : new THREE.BoxGeometry(thickness, h, w);
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.82, emissive: 0x000000, emissiveIntensity: 0 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.copy(pos);
@@ -356,284 +446,385 @@ export default function Building3D({ data, view }) {
     mesh.userData.label = label;
     mesh.userData.face = normal === "z" ? (pos.z > 0 ? "S" : "N") : (pos.x > 0 ? "E" : "W");
     mesh.userData.part = "wall";
-    group.add(mesh);
-    hoverableRef.current.push(mesh);
+    s.buildingGroup.add(mesh);
+    s.hoverable.push(mesh);
     return mesh;
   }
 
-  function rebuildBuilding() {
-    clearBuilding();
-    const group = buildingGroupRef.current;
+  function rebuildSide(side, mode) {
+    const s = sidesRef.current[side];
+    if (!s || !data) return;
+    try {
+    disposeGroup(s.heatLossGroup);
+    disposeGroup(s.airflowGroup);
+    disposeGroup(s.solarRayGroup);
+    disposeGroup(s.sectionGroup);
+    while (s.buildingGroup.children.length) {
+      const c = s.buildingGroup.children.pop();
+      if (c === s.interiorGlow || c === s.interiorSprite) continue;
+      if (c.children?.length) disposeGroup(c);
+      c.geometry?.dispose?.();
+      c.material?.dispose?.();
+    }
+    s.buildingGroup.add(s.heatLossGroup, s.airflowGroup, s.solarRayGroup, s.interiorGlow, s.interiorSprite);
+    s.hoverable = [];
+
     const { classification, geometry, inputs } = data;
-    const designParams = data.designParams[designMode];
+    const designParams = data.designParams[mode];
     const width = geometry.width, length = geometry.length;
     const totalHeight = geometry.totalHeight, floors = geometry.floors, floorH = geometry.roomHeight;
     const shares = uaShares(designParams, geometry);
+    const isBaseline = mode === "baseline";
 
-    const wallColor = facadeColorFor("wall", view, classification, shares);
-    const roofColor = facadeColorFor("roof", view, classification, shares);
-    const windowColor = facadeColorFor("window", view, classification, shares);
-    const roofStyle = ROOF_MATERIAL_STYLE[inputs.roofMaterial] || ROOF_MATERIAL_STYLE.concrete;
-    const wallT = designMode === "baseline" ? 0.22 : Math.max(0.18, Math.min(0.5, (inputs.wallThicknessMM || 300) / 1000));
+    const wallColor = view === "thermal" ? heatColor(shares.wall) : CLIMATE_WALL_COLOR[classification.key];
+    const roofColorBase = isBaseline ? ROOF_MATERIAL_STYLE.concrete.color : (ROOF_MATERIAL_STYLE[inputs.roofMaterial]?.color ?? 0x8a7a63);
+    const roofColor = view === "thermal" ? heatColor(shares.roof) : roofColorBase;
+    const windowColor = view === "thermal" ? heatColor(shares.window) : 0x9fd6ee;
+    const roofStyle = isBaseline ? ROOF_MATERIAL_STYLE.concrete : (ROOF_MATERIAL_STYLE[inputs.roofMaterial] || ROOF_MATERIAL_STYLE.concrete);
+    const wallT = isBaseline ? 0.12 : Math.max(0.18, Math.min(0.5, (inputs.wallThicknessMM || 300) / 1000));
 
-    addWallFace(group, { w: width, h: totalHeight, thickness: wallT, normal: "z", pos: new THREE.Vector3(0, totalHeight / 2, length / 2 - wallT / 2), color: wallColor, label: `South wall — U ${designParams.uWall.toFixed(2)} W/m²K (${designMode})` });
-    addWallFace(group, { w: width, h: totalHeight, thickness: wallT, normal: "z", pos: new THREE.Vector3(0, totalHeight / 2, -length / 2 + wallT / 2), color: wallColor, label: `North wall — U ${designParams.uWall.toFixed(2)} W/m²K (${designMode})` });
-    addWallFace(group, { w: length, h: totalHeight, thickness: wallT, normal: "x", pos: new THREE.Vector3(width / 2 - wallT / 2, totalHeight / 2, 0), color: wallColor, label: `East wall — U ${designParams.uWall.toFixed(2)} W/m²K (${designMode})` });
-    addWallFace(group, { w: length, h: totalHeight, thickness: wallT, normal: "x", pos: new THREE.Vector3(-width / 2 + wallT / 2, totalHeight / 2, 0), color: wallColor, label: `West wall — U ${designParams.uWall.toFixed(2)} W/m²K (${designMode})` });
+    addWallFace(side, { w: width, h: totalHeight, thickness: wallT, normal: "z", pos: new THREE.Vector3(0, totalHeight / 2, length / 2 - wallT / 2), color: wallColor, label: `South wall — U ${designParams.uWall.toFixed(2)} W/m²K` });
+    addWallFace(side, { w: width, h: totalHeight, thickness: wallT, normal: "z", pos: new THREE.Vector3(0, totalHeight / 2, -length / 2 + wallT / 2), color: wallColor, label: `North wall — U ${designParams.uWall.toFixed(2)} W/m²K` });
+    addWallFace(side, { w: length, h: totalHeight, thickness: wallT, normal: "x", pos: new THREE.Vector3(width / 2 - wallT / 2, totalHeight / 2, 0), color: wallColor, label: `East wall — U ${designParams.uWall.toFixed(2)} W/m²K` });
+    addWallFace(side, { w: length, h: totalHeight, thickness: wallT, normal: "x", pos: new THREE.Vector3(-width / 2 + wallT / 2, totalHeight / 2, 0), color: wallColor, label: `West wall — U ${designParams.uWall.toFixed(2)} W/m²K` });
 
-    const floorSlab = new THREE.Mesh(
-      new THREE.BoxGeometry(width * 1.02, 0.12, length * 1.02),
-      new THREE.MeshStandardMaterial({ color: 0x2a3a4e, roughness: 0.9 })
-    );
+    const floorSlab = new THREE.Mesh(new THREE.BoxGeometry(width * 1.02, 0.12, length * 1.02), new THREE.MeshStandardMaterial({ color: 0x2a3a4e, roughness: 0.9 }));
     floorSlab.position.y = -0.02;
     floorSlab.receiveShadow = true;
-    group.add(floorSlab);
+    s.buildingGroup.add(floorSlab);
 
     for (let f = 1; f < floors; f++) {
-      const slab = new THREE.Mesh(
-        new THREE.BoxGeometry(width * 1.01, 0.06, length * 1.01),
-        new THREE.MeshStandardMaterial({ color: 0x3a4a5e, roughness: 0.9 })
-      );
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(width * 1.01, 0.06, length * 1.01), new THREE.MeshStandardMaterial({ color: 0x3a4a5e, roughness: 0.9 }));
       slab.position.y = f * floorH;
       slab.receiveShadow = true;
-      group.add(slab);
+      s.buildingGroup.add(slab);
     }
 
     const roofMat = new THREE.MeshStandardMaterial({ color: roofColor, roughness: roofStyle.roughness, metalness: roofStyle.metalness });
+    const overhang = isBaseline ? 1.0 : 1.14;
     let roof;
-    if (inputs.roofType === "pitched") {
+    if (!isBaseline && inputs.roofType === "pitched") {
       roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(width, length) * 0.62, Math.min(width, length) * 0.55, 4), roofMat);
       roof.rotation.y = Math.PI / 4;
       roof.scale.set(width / Math.max(width, length), 1, length / Math.max(width, length));
       roof.position.y = totalHeight + Math.min(width, length) * 0.275;
-    } else if (inputs.roofType === "vaulted") {
+    } else if (!isBaseline && inputs.roofType === "vaulted") {
       roof = new THREE.Mesh(new THREE.CylinderGeometry(length * 0.52, length * 0.52, width, 20, 1, false, 0, Math.PI), roofMat);
       roof.rotation.z = Math.PI / 2;
       roof.position.y = totalHeight + length * 0.26;
     } else {
-      roof = new THREE.Mesh(new THREE.BoxGeometry(width * 1.06, Math.max(width, length) * 0.06, length * 1.06), roofMat);
+      roof = new THREE.Mesh(new THREE.BoxGeometry(width * overhang, Math.max(width, length) * 0.055, length * overhang), roofMat);
       roof.position.y = totalHeight + Math.max(width, length) * 0.03;
     }
     roof.castShadow = true; roof.receiveShadow = true;
-    roof.userData.label = `${inputs.roofType[0].toUpperCase() + inputs.roofType.slice(1)} roof — ${inputs.roofMaterial}, U ${designParams.uRoof.toFixed(2)} W/m²K`;
+    roof.userData.label = isBaseline ? `Flat unoptimized roof — U ${designParams.uRoof.toFixed(2)} W/m²K` : `${inputs.roofType[0].toUpperCase() + inputs.roofType.slice(1)} roof — ${inputs.roofMaterial}, U ${designParams.uRoof.toFixed(2)} W/m²K`;
     roof.userData.part = "roof";
-    group.add(roof);
-    hoverableRef.current.push(roof);
+    s.buildingGroup.add(roof);
+    s.hoverable.push(roof);
 
     const winArea = designParams.windowArea;
     const perFloorArea = winArea / floors;
     const winW = Math.min(width * 0.75, Math.sqrt(perFloorArea * 2.2));
     const winH = Math.min(floorH * 0.55, perFloorArea / Math.max(0.5, winW));
     const winMat = new THREE.MeshPhysicalMaterial({
-      color: windowColor, roughness: 0.05, metalness: 0.0, transparent: true, opacity: 0.55,
-      transmission: 0.55, thickness: 0.05,
+      color: windowColor, roughness: 0.05, transparent: true, opacity: 0.55, transmission: 0.55, thickness: 0.05,
       emissive: view === "thermal" ? windowColor : 0x2a4a5e, emissiveIntensity: view === "thermal" ? 0.3 : 0.12,
     });
-    const gainLabel = classification.key.startsWith("cold")
-      ? `High solar-gain window (south-facing) — increases winter heat gain [${designMode}]`
-      : classification.key === "hot-humid" ? `Cross-ventilation opening — cools interior [${designMode}]` : `Shaded, minimal-gain opening [${designMode}]`;
+
+    const windowAnchors = [];
     for (let f = 0; f < floors; f++) {
       const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, Math.max(0.4, winH)), winMat.clone());
       win.position.set(0, f * floorH + floorH * 0.55, length / 2 + 0.02);
       win.rotation.y = Math.PI;
-      win.userData.label = gainLabel;
+      win.userData.label = isBaseline ? "Small, poorly placed window — high heat loss" : "South-facing window — optimized solar gain";
       win.userData.part = "window";
       win.userData.anchor = new THREE.Vector3(0, f * floorH + floorH * 0.55, length / 2);
-      group.add(win);
-      hoverableRef.current.push(win);
+      s.buildingGroup.add(win);
+      s.hoverable.push(win);
+      windowAnchors.push(win.userData.anchor);
     }
 
-    if (classification.key === "hot-humid" || designMode === "optimized") {
+    if (!isBaseline) {
       for (let f = 0; f < floors; f++) {
         const back = new THREE.Mesh(new THREE.PlaneGeometry(winW * 0.9, Math.max(0.4, winH * 0.9)), winMat.clone());
         back.position.set(0, f * floorH + floorH * 0.55, -length / 2 - 0.02);
-        back.userData.label = "Cross-ventilation opening (leeward) — draws cool air through";
+        back.userData.label = "Cross-ventilation opening — draws cool air through";
         back.userData.part = "window";
         back.userData.anchor = new THREE.Vector3(0, f * floorH + floorH * 0.55, -length / 2);
-        group.add(back);
-        hoverableRef.current.push(back);
+        s.buildingGroup.add(back);
+        s.hoverable.push(back);
+        windowAnchors.push(back.userData.anchor);
       }
+      [-1, 1].forEach((side2) => {
+        for (let f = 0; f < floors; f++) {
+          const sw = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(1.1, length * 0.18), 0.9), winMat.clone());
+          sw.position.set(side2 * (width / 2 + 0.02), f * floorH + floorH * 0.55, length * 0.15);
+          sw.rotation.y = side2 > 0 ? Math.PI / 2 : -Math.PI / 2;
+          sw.userData.label = "Secondary daylight opening";
+          sw.userData.part = "window";
+          s.buildingGroup.add(sw);
+          s.hoverable.push(sw);
+        }
+      });
     }
-
-    const sideWinMat = winMat.clone();
-    [-1, 1].forEach((side) => {
-      for (let f = 0; f < floors; f++) {
-        const sw = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(1.1, length * 0.18), 0.9), sideWinMat.clone());
-        sw.position.set(side * (width / 2 + 0.02), f * floorH + floorH * 0.55, length * 0.15);
-        sw.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
-        sw.userData.label = "Secondary daylight opening";
-        sw.userData.part = "window";
-        group.add(sw);
-        hoverableRef.current.push(sw);
-      }
-    });
 
     const door = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 1.95), new THREE.MeshStandardMaterial({ color: 0x2a2118, roughness: 0.6 }));
     door.position.set(width * 0.28, 0.975, length / 2 + 0.015);
     door.rotation.y = Math.PI;
-    door.userData.label = "Main entrance (ground floor)";
-    group.add(door);
-    hoverableRef.current.push(door);
+    door.userData.label = "Main entrance";
+    s.buildingGroup.add(door);
+    s.hoverable.push(door);
 
     const ventAnchors = [];
-    if (designMode === "optimized" && inputs.ventilationType !== "none") {
+    if (!isBaseline && inputs.ventilationType !== "none") {
       const grilleColor = inputs.ventilationType === "mechanical" ? 0x3a4a5e : 0x22334a;
-      [-1, 1].forEach((side) => {
+      [-1, 1].forEach((side2) => {
         const grille = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.35), new THREE.MeshStandardMaterial({ color: grilleColor, roughness: 0.5, emissive: 0x1a2a3a, emissiveIntensity: 0.2 }));
-        grille.position.set(side * width * 0.32, totalHeight - 0.35, length / 2 + 0.02);
+        grille.position.set(side2 * width * 0.32, totalHeight - 0.35, length / 2 + 0.02);
         grille.rotation.y = Math.PI;
-        grille.userData.label = `Ventilation zone (${inputs.ventilationType}) — reduces overheating`;
+        grille.userData.label = `Ventilation duct (${inputs.ventilationType}) — controlled fresh air`;
         grille.userData.part = "vent";
-        group.add(grille);
-        hoverableRef.current.push(grille);
-        ventAnchors.push(new THREE.Vector3(side * width * 0.32, totalHeight - 0.35, length / 2));
+        s.buildingGroup.add(grille);
+        s.hoverable.push(grille);
+        const anchor = new THREE.Vector3(side2 * width * 0.32, totalHeight - 0.35, length / 2);
+        ventAnchors.push(anchor);
+
+        const duct = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.4, 8), new THREE.MeshStandardMaterial({ color: 0x4a6a7e, roughness: 0.4, metalness: 0.3 }));
+        duct.position.set(side2 * width * 0.32, totalHeight - 0.35, length / 2 + 0.7);
+        duct.rotation.x = Math.PI / 2;
+        s.buildingGroup.add(duct);
       });
     }
 
     if (floors > 1 && width >= 5) {
       const balconyY = floorH * (floors - 1) + 0.05;
-      const slab = new THREE.Mesh(
-        new THREE.BoxGeometry(width * 0.5, 0.08, 1.1),
-        new THREE.MeshStandardMaterial({ color: 0x8a8a86, roughness: 0.8 })
-      );
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, 0.08, 1.1), new THREE.MeshStandardMaterial({ color: 0x8a8a86, roughness: 0.8 }));
       slab.position.set(0, balconyY, length / 2 + 0.6);
       slab.castShadow = true; slab.receiveShadow = true;
       slab.userData.label = "Balcony";
-      group.add(slab);
-      hoverableRef.current.push(slab);
-      const rail = new THREE.Mesh(
-        new THREE.BoxGeometry(width * 0.5, 0.5, 0.04),
-        new THREE.MeshStandardMaterial({ color: 0xcfd6dc, roughness: 0.4, metalness: 0.3 })
-      );
+      s.buildingGroup.add(slab);
+      s.hoverable.push(slab);
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, 0.5, 0.04), new THREE.MeshStandardMaterial({ color: 0xcfd6dc, roughness: 0.4, metalness: 0.3 }));
       rail.position.set(0, balconyY + 0.3, length / 2 + 1.13);
-      group.add(rail);
+      s.buildingGroup.add(rail);
     }
 
-    group.userData.ventAnchors = ventAnchors;
-    group.userData.dims = { width, length, totalHeight };
-    const azimuth = geometry.azimuth ?? 180;
-    group.rotation.y = ((180 - azimuth) * Math.PI) / 180;
+    buildSection(side, mode, width);
 
-    buildAirflow();
-    buildHeatFlow();
+    s.dims = { width, length, totalHeight, floors };
+    s.ventAnchors = ventAnchors;
+    s.windowAnchors = windowAnchors;
+    s.buildingGroup.rotation.y = isBaseline ? WRONG_ROTATION : ((180 - (geometry.azimuth ?? 180)) * Math.PI) / 180;
+
+    buildHeatLoss(side, mode);
+    buildAirflowVisual(side, mode);
+    } catch (err) {
+      console.error("Building3D rebuildSide error:", err);
+    }
   }
 
-  function buildAirflow() {
-    const group = buildingGroupRef.current;
-    if (airflowGroupRef.current) { group.remove(airflowGroupRef.current); airflowGroupRef.current = null; }
-    if (view !== "airflow" || !data) return;
-    const { classification } = data;
-    const { width, length, totalHeight } = group.userData.dims || {};
-    const ventAnchors = group.userData.ventAnchors || [];
-    const ag = new THREE.Group();
-    const hasCrossVent = classification.key === "hot-humid";
+  function buildSection(side, mode, width) {
+    const s = sidesRef.current[side];
+    const grp = s.sectionGroup;
+    grp.position.set(0, 1.3, 0);
+    grp.rotation.copy(s.buildingGroup.rotation);
+    const x0 = width / 2 + 1.4;
+    if (mode === "baseline") {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0x8a8478, roughness: 0.9 }));
+      box.position.set(x0, 0, 0);
+      box.userData.label = "No insulation — single layer wall";
+      grp.add(box);
+      s.hoverable.push(box);
+    } else {
+      const outer = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0x8a8478, roughness: 0.9 }));
+      outer.position.set(x0, 0, 0);
+      outer.userData.label = "Outer wall layer";
+      const insul = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0xe8934a, roughness: 0.6, emissive: 0xe8934a, emissiveIntensity: 0.35 }));
+      insul.position.set(x0 + 0.24, 0, 0);
+      insul.userData.label = "Insulation layer — cuts heat transfer";
+      const inner = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0xc9c2b4, roughness: 0.9 }));
+      inner.position.set(x0 + 0.46, 0, 0);
+      inner.userData.label = "Inner wall layer";
+      grp.add(outer, insul, inner);
+      s.hoverable.push(outer, insul, inner);
+    }
+  }
+
+  function buildHeatLoss(side, mode) {
+    const s = sidesRef.current[side];
+    disposeGroup(s.heatLossGroup);
+    if (!data || view === "airflow") return;
+    const isBaseline = mode === "baseline";
+    const { width, length, totalHeight } = s.dims;
+    const ratio = isBaseline ? Math.max(1, uaTotals.baseline / Math.max(1, uaTotals.optimized)) : 1;
+    const count = isBaseline ? Math.min(22, Math.round(6 * ratio)) : 4;
+    const sources = [
+      { pos: new THREE.Vector3(0, totalHeight * 0.85, length / 2), dir: new THREE.Vector3(0, 0.3, 1) },
+      { pos: new THREE.Vector3(0, totalHeight + 0.1, 0), dir: new THREE.Vector3(0, 1, 0) },
+      { pos: new THREE.Vector3(width / 2, totalHeight * 0.5, 0), dir: new THREE.Vector3(1, 0.15, 0) },
+      { pos: new THREE.Vector3(-width / 2, totalHeight * 0.5, 0), dir: new THREE.Vector3(-1, 0.15, 0) },
+    ];
+    for (let i = 0; i < count; i++) {
+      const src = sources[i % sources.length];
+      const mat = new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xe0402e, transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending });
+      const sp = new THREE.Sprite(mat);
+      sp.scale.set(0.3, 0.3, 1);
+      const jitter = new THREE.Vector3((Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.8);
+      const from = src.pos.clone().add(jitter);
+      sp.position.copy(from);
+      sp.userData = { t: Math.random(), from, dir: src.dir.clone().normalize(), dist: 2.4 + Math.random(), speed: 0.6 + Math.random() * 0.5, baseOpacity: 0.8 };
+      s.heatLossGroup.add(sp);
+    }
+    const arrowCount = isBaseline ? 3 : 1;
+    for (let i = 0; i < arrowCount; i++) {
+      const src = sources[i % sources.length];
+      const arrow = new THREE.ArrowHelper(src.dir.clone().normalize(), src.pos, 1.6, 0xe0402e, 0.35, 0.22);
+      s.heatLossGroup.add(arrow);
+    }
+  }
+
+  function buildAirflowVisual(side, mode) {
+    const s = sidesRef.current[side];
+    disposeGroup(s.airflowGroup);
+    if (!data || view !== "airflow") return;
+    const isBaseline = mode === "baseline";
+    const { width, length, totalHeight } = s.dims;
     const coolMat = () => new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0x6fa8c9, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });
     const hotMat = () => new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xe0522e, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });
-
-    const windowAnchors = [];
-    (buildingGroupRef.current.children || []).forEach((c) => {
-      if (c.userData.part === "window" && c.userData.anchor) windowAnchors.push(c.userData.anchor);
-    });
-
-    const makeParticle = (from, to, mat, speed, arc) => {
-      const s = new THREE.Sprite(mat);
-      s.scale.set(0.35, 0.35, 1);
-      s.position.copy(from);
-      s.userData = { t: Math.random(), from, to, speed, arc };
-      ag.add(s);
+    const makeParticle = (grp, from, to, mat, speed, arc) => {
+      const sp = new THREE.Sprite(mat);
+      sp.scale.set(0.3, 0.3, 1);
+      sp.position.copy(from);
+      sp.userData = { t: Math.random(), from, to, speed, arc };
+      grp.add(sp);
     };
-
-    windowAnchors.forEach((wa, i) => {
-      if (wa.z > 0) {
-        const to = ventAnchors[i % Math.max(1, ventAnchors.length)] || new THREE.Vector3(0, totalHeight - 0.3, wa.z * -1);
-        for (let n = 0; n < 3; n++) makeParticle(wa.clone(), to.clone(), coolMat(), 0.8 + n * 0.15, 0.6);
-      } else {
-        const exitPt = new THREE.Vector3(0, totalHeight * 0.55, wa.z);
-        for (let n = 0; n < 2; n++) makeParticle(new THREE.Vector3(0, totalHeight * 0.55, wa.z > 0 ? -length / 2 : length / 2), wa.clone(), hasCrossVent ? coolMat() : hotMat(), 0.7 + n * 0.1, 0.3);
+    if (isBaseline) {
+      for (let i = 0; i < 6; i++) {
+        const gapX = (Math.random() - 0.5) * width * 0.9;
+        const from = new THREE.Vector3(gapX, 0.15, length / 2 + 1.6);
+        const to = new THREE.Vector3(gapX * 0.6, 0.6 + Math.random() * 0.8, 0);
+        makeParticle(s.airflowGroup, from, to, coolMat(), 0.5 + Math.random() * 0.3, 0.15);
       }
-    });
-
-    ventAnchors.forEach((va) => {
-      for (let n = 0; n < 2; n++) makeParticle(new THREE.Vector3(0, totalHeight * 0.4, 0), va.clone(), hotMat(), 0.6 + n * 0.2, 0.9);
-    });
-
-    if (!windowAnchors.length && !ventAnchors.length) {
-      const dir = new THREE.Vector3(0, 0, 1);
-      const len = length + 3;
-      const origin = new THREE.Vector3(0, totalHeight * 0.5, -length / 2 - len);
-      ag.add(new THREE.ArrowHelper(dir, origin, len, hasCrossVent ? 0x6fa8c9 : 0x55606e, 0.9, 0.5));
-    }
-
-    airflowGroupRef.current = ag;
-    group.add(ag);
-  }
-
-  function buildHeatFlow() {
-    const group = buildingGroupRef.current;
-    if (heatGroupRef.current) { group.remove(heatGroupRef.current); heatGroupRef.current = null; }
-    if (!data || view === "airflow") return;
-    const { width, length, totalHeight } = group.userData.dims || {};
-    const hg = new THREE.Group();
-    const daylight = hour >= 6 && hour <= 18;
-
-    if (daylight) {
-      const sunPos = sunDirRef.current.clone().multiplyScalar(16);
-      const wallCenter = new THREE.Vector3(0, totalHeight * 0.55, length / 2);
-      for (let n = 0; n < 5; n++) {
-        const mat = new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xffb35a, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending });
-        const s = new THREE.Sprite(mat);
-        s.scale.set(0.3, 0.3, 1);
-        const jitter = new THREE.Vector3((Math.random() - 0.5) * width * 0.6, (Math.random() - 0.5) * totalHeight * 0.5, 0);
-        s.userData = { t: Math.random(), from: sunPos.clone(), to: wallCenter.clone().add(jitter), mode: "beam", speed: 0.5 + Math.random() * 0.4 };
-        hg.add(s);
+      for (let i = 0; i < 3; i++) {
+        const from = new THREE.Vector3((Math.random() - 0.5) * width * 0.7, totalHeight * 0.9, (Math.random() - 0.5) * length * 0.7);
+        const to = new THREE.Vector3(from.x * 1.4, totalHeight + 2, from.z * 1.4);
+        makeParticle(s.airflowGroup, from, to, hotMat(), 0.5, 0.05);
       }
     } else {
-      for (let n = 0; n < 6; n++) {
-        const mat = new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xd46a3e, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending });
-        const s = new THREE.Sprite(mat);
-        s.scale.set(0.28, 0.28, 1);
-        const baseX = (Math.random() - 0.5) * width * 0.8;
-        const baseZ = (Math.random() - 0.5) * length * 0.8;
-        s.position.set(baseX, totalHeight + 0.2, baseZ);
-        s.userData = { t: Math.random(), mode: "rise", baseY: totalHeight + 0.2, baseX, height: 2.5 + Math.random(), seed: Math.random() * 10, speed: 0.5 + Math.random() * 0.5 };
-        hg.add(s);
-      }
+      s.windowAnchors.forEach((wa, i) => {
+        const vent = s.ventAnchors[i % Math.max(1, s.ventAnchors.length)] || new THREE.Vector3(0, totalHeight - 0.3, -wa.z);
+        for (let n = 0; n < 3; n++) makeParticle(s.airflowGroup, wa.clone(), vent.clone(), coolMat(), 0.8 + n * 0.12, 0.5);
+      });
+      s.ventAnchors.forEach((va) => {
+        for (let n = 0; n < 2; n++) makeParticle(s.airflowGroup, new THREE.Vector3(0, totalHeight * 0.4, 0), va.clone(), hotMat(), 0.6 + n * 0.15, 0.8);
+      });
     }
-    heatGroupRef.current = hg;
-    group.add(hg);
   }
 
-  function recolorForView() {
+  function buildSolarRays(side, mode, sunPos) {
+    const s = sidesRef.current[side];
+    disposeGroup(s.solarRayGroup);
+    if (!data || view === "airflow") return;
+    const daylight = hour >= 6 && hour <= 18;
+    if (!daylight) return;
+    const isBaseline = mode === "baseline";
+    const { length, totalHeight } = s.dims;
+    const target = new THREE.Vector3(0, totalHeight * 0.5, isBaseline ? length * 0.2 : length / 2);
+    const count = isBaseline ? 2 : 6;
+    const opacity = isBaseline ? 0.28 : 0.75;
+    for (let i = 0; i < count; i++) {
+      const mat = new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xffd89a, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending });
+      const sp = new THREE.Sprite(mat);
+      sp.scale.set(isBaseline ? 0.22 : 0.34, isBaseline ? 0.22 : 0.34, 1);
+      const jitter = new THREE.Vector3((Math.random() - 0.5) * 1.4, (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 0.6);
+      const from = sunPos.clone();
+      const to = target.clone().add(jitter);
+      sp.position.copy(from);
+      sp.userData = { t: Math.random(), from, to, baseOpacity: opacity };
+      s.solarRayGroup.add(sp);
+    }
+  }
+
+  function buildWeather(side) {
+    const s = sidesRef.current[side];
+    disposeGroup(s.weatherGroup);
+    const special = data?.inputs?.special;
+    if (!special) return;
+    if (special.snow) {
+      for (let i = 0; i < 90; i++) {
+        const mat = new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xdfeeff, transparent: true, opacity: 0.75, depthWrite: false });
+        const sp = new THREE.Sprite(mat);
+        const scale = 0.06 + Math.random() * 0.08;
+        sp.scale.set(scale, scale, 1);
+        sp.position.set((Math.random() - 0.5) * 16, Math.random() * 10, (Math.random() - 0.5) * 16);
+        sp.userData = { kind: "snow", speed: 0.4 + Math.random() * 0.5, drift: (Math.random() - 0.5) * 0.3, seed: Math.random() * 10 };
+        s.weatherGroup.add(sp);
+      }
+    }
+    if (special.wind) {
+      for (let i = 0; i < 24; i++) {
+        const mat = new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xaebfce, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending });
+        const sp = new THREE.Sprite(mat);
+        sp.scale.set(0.5, 0.08, 1);
+        sp.position.set(-9 - Math.random() * 4, 0.5 + Math.random() * 4, (Math.random() - 0.5) * 12);
+        sp.userData = { kind: "wind", speed: 3 + Math.random() * 2, t: Math.random() };
+        s.weatherGroup.add(sp);
+      }
+    }
+    if (special.heatwave) {
+      for (let i = 0; i < 30; i++) {
+        const mat = new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xff7a3d, transparent: true, opacity: 0.18, depthWrite: false, blending: THREE.AdditiveBlending });
+        const sp = new THREE.Sprite(mat);
+        const scale = 0.4 + Math.random() * 0.5;
+        sp.scale.set(scale, scale, 1);
+        sp.position.set((Math.random() - 0.5) * 10, 0.1, (Math.random() - 0.5) * 10);
+        sp.userData = { kind: "heatwave", speed: 0.5 + Math.random() * 0.6, seed: Math.random() * 10, baseY: 0.1 };
+        s.weatherGroup.add(sp);
+      }
+    }
+  }
+
+  function recolor() {
     if (!data) return;
-    const { classification, geometry } = data;
-    const designParams = data.designParams[designMode];
-    const shares = uaShares(designParams, geometry);
-    const entries = [];
-    hoverableRef.current.forEach((mesh) => {
-      if (!mesh.material || !mesh.material.color) return;
-      let target = null;
-      if (mesh.userData.part === "wall") {
-        const base = facadeColorFor("wall", view, classification, shares);
-        if (view === "thermal") {
-          const worldNormal = new THREE.Vector3(mesh.userData.face === "S" ? 0 : mesh.userData.face === "N" ? 0 : mesh.userData.face === "E" ? 1 : -1,
-            0, mesh.userData.face === "S" ? 1 : mesh.userData.face === "N" ? -1 : 0);
-          worldNormal.applyEuler(new THREE.Euler(0, buildingGroupRef.current.rotation.y, 0));
-          const exposure = Math.max(0, worldNormal.dot(sunDirRef.current));
-          const baseT = Math.max(0, Math.min(1, shares.wall / 0.55)) * 0.5 + 0.5;
-          target = tempColor(Math.min(1, baseT + exposure * 0.35));
-        } else target = base;
-      } else if (mesh.userData.part === "roof") target = facadeColorFor("roof", view, classification, shares);
-      else if (mesh.userData.part === "window") target = facadeColorFor("window", view, classification, shares);
-      if (target !== null) entries.push({ mesh, from: mesh.material.color.getHex(), to: target });
+    ["L", "R"].forEach((side) => {
+      const s = sidesRef.current[side];
+      if (!s) return;
+      try {
+      const mode = side === "L" ? "baseline" : "optimized";
+      const { classification, geometry } = data;
+      const designParams = data.designParams[mode];
+      const shares = uaShares(designParams, geometry);
+      const entries = [];
+      s.hoverable.forEach((mesh) => {
+        if (!mesh.material || !mesh.material.color) return;
+        let target = null;
+        if (mesh.userData.part === "wall") {
+          if (view === "thermal") {
+            const worldNormal = new THREE.Vector3(mesh.userData.face === "E" ? 1 : mesh.userData.face === "W" ? -1 : 0, 0, mesh.userData.face === "S" ? 1 : mesh.userData.face === "N" ? -1 : 0);
+            worldNormal.applyEuler(new THREE.Euler(0, s.buildingGroup.rotation.y, 0));
+            const exposure = Math.max(0, worldNormal.dot(sunDirRef.current));
+            const baseT = Math.max(0, Math.min(1, shares.wall / 0.55)) * 0.5 + 0.5;
+            target = tempColor(Math.min(1, baseT + exposure * 0.35));
+          } else target = CLIMATE_WALL_COLOR[classification.key] ?? CLIMATE_WALL_COLOR.composite;
+        } else if (mesh.userData.part === "roof") {
+          target = view === "thermal" ? heatColor(shares.roof) : (mode === "baseline" ? ROOF_MATERIAL_STYLE.concrete.color : (ROOF_MATERIAL_STYLE[data.inputs.roofMaterial]?.color ?? 0x8a7a63));
+        } else if (mesh.userData.part === "window") {
+          target = view === "thermal" ? heatColor(shares.window) : 0x9fd6ee;
+        }
+        if (target !== null && target !== undefined) entries.push({ mesh, from: mesh.material.color.getHex(), to: target });
+      });
+      transitionRef.current[side] = { start: performance.now(), entries };
+      buildHeatLoss(side, mode);
+      buildAirflowVisual(side, mode);
+      buildSolarRays(side, mode, s.sunLight.position);
+      } catch (err) {
+        console.error("Building3D recolor error:", err);
+      }
     });
-    transitionRef.current = { start: performance.now(), entries };
-    buildAirflow();
-    buildHeatFlow();
   }
 
   function updateSun(h) {
-    const sunLight = sunLightRef.current, ambientLight = ambientLightRef.current, scene = sceneRef.current;
-    if (!sunLight || !data) return;
+    if (!data) return;
     const frac = (h - 6) / 12;
     const daylight = frac >= 0 && frac <= 1;
     const elevation = daylight ? Math.sin(frac * Math.PI) : 0;
@@ -643,91 +834,174 @@ export default function Building3D({ data, view }) {
     const dirX = Math.sin(bearingRad) * Math.cos(elevRad);
     const dirZ = Math.cos(bearingRad) * Math.cos(elevRad);
     const dirY = Math.sin(elevRad);
-    sunLight.position.set(dirX * R, Math.max(0.6, dirY * R), dirZ * R);
-    sunLight.target.position.set(0, 2, 0);
-    sunLight.intensity = daylight ? 0.6 + 1.15 * elevation : 0.12;
-    ambientLight.intensity = daylight ? 0.45 + 0.35 * elevation : 0.55;
-    scene.background = new THREE.Color(daylight ? lerpColor(0x0d1826, 0x2c5a8c, elevation) : 0x060b14);
-    scene.fog.color = scene.background;
     sunDirRef.current.set(dirX, Math.max(0.02, dirY), dirZ).normalize();
-    if (sunMeshRef.current) {
-      sunMeshRef.current.position.copy(sunLight.position);
-      sunMeshRef.current.material.opacity = daylight ? 0.9 : 0.1;
-    }
+
+    ["L", "R"].forEach((side) => {
+      const s = sidesRef.current[side];
+      if (!s) return;
+      try {
+      s.sunLight.position.set(dirX * R, Math.max(0.6, dirY * R), dirZ * R);
+      s.sunLight.target.position.set(0, 2, 0);
+      s.sunLight.intensity = daylight ? 0.6 + 1.15 * elevation : 0.12;
+      s.ambientLight.intensity = daylight ? 0.45 + 0.35 * elevation : 0.55;
+      const bg = daylight ? lerpColor(0x0d1826, 0x2c5a8c, elevation) : new THREE.Color(0x060b14);
+      s.scene.background = bg;
+      s.scene.fog.color = bg;
+      s.sunMesh.position.copy(s.sunLight.position);
+      s.sunMesh.material.opacity = daylight ? 0.9 : 0.1;
+
+      const mode = side === "L" ? "baseline" : "optimized";
+      const indoorArr = mode === "baseline" ? data.simulation.baselineIndoor : data.simulation.optimizedIndoor;
+      const outdoorArr = data.simulation.outdoor;
+      const outMin = Math.min(...outdoorArr);
+      const ceil = (data.inputs?.desiredTemp || 21) + 3;
+      const warmthRaw = (safeNum(indoorArr[h], outMin) - outMin) / Math.max(1, ceil - outMin);
+      const warmth = Math.max(0, Math.min(1, warmthRaw));
+      s.interiorGlow.intensity = warmth * 2.2;
+      s.interiorSprite.material.opacity = warmth * 0.5;
+      s.interiorSprite.position.set(0, s.dims.totalHeight ? s.dims.totalHeight * 0.55 : 1.6, 0);
+      s.interiorGlow.position.copy(s.interiorSprite.position);
+      } catch (err) {
+        console.error("Building3D updateSun error:", err);
+      }
+    });
   }
 
-  if (!data) return null;
+  const insights = useMemo(() => {
+    if (!data) return { L: [], R: [] };
+    const { comparison, simulation } = data;
+    const night = hour >= 19 || hour < 6;
+    const L = [
+      "Baseline construction — standard materials, no optimization",
+      night ? "Temperature drops rapidly after sunset" : "Weak, misaligned solar capture",
+      view === "thermal" ? "High heat loss through roof & walls" : view === "airflow" ? "Uncontrolled airflow through gaps" : "Wrong orientation — window misses the sun",
+      `Retains only ${Math.round(simulation.baselineMetrics?.retention ?? 0)}% of the day-night swing`,
+      "No insulation layer, no vents",
+    ];
+    const R = [
+      "Optimized construction — climate-matched design",
+      night ? `Retains ${Math.abs(comparison.nightTemperatureGain)}°C more heat at night` : "Strong, aligned solar capture",
+      view === "thermal" ? "Reduced heat loss — insulated envelope" : view === "airflow" ? "Designed ventilation — controlled fresh air" : "South-facing orientation captures solar heat",
+      `${comparison.energySavingPercent}% less heating/cooling energy required`,
+      "Insulated walls, visible ventilation ducts",
+    ];
+    return { L, R };
+  }, [data, hour, view]);
 
-  const { comparison, classification } = data;
-  const modeLabel = designMode === "optimized" ? "Optimized" : "Baseline";
-  const activeLabel = pinnedLabel || hoverLabel;
+  useEffect(() => {
+    const len = Math.max(insights.L.length, 1);
+    const t = setInterval(() => setInsightIdx((i) => (i + 1) % len), 4200);
+    return () => clearInterval(t);
+  }, [insights]);
+
+  const baseRetention = useCountUp(data?.simulation?.baselineMetrics?.retention ? Math.round(data.simulation.baselineMetrics.retention) : 0);
+  const optRetention = useCountUp(data?.simulation?.optimizedMetrics?.retention ? Math.round(data.simulation.optimizedMetrics.retention) : 0);
+  const energySaving = useCountUp(data?.comparison?.energySavingPercent ?? 0);
+  const comfortDelta = useCountUp((data?.comfortScore?.overall ?? 0) - (data?.baselineScore?.overall ?? 0));
+
+  const night = hour >= 18 || hour < 6;
+  const simpleCaptionL = night ? "Heat is escaping here" : "Sunlight enters, but not efficiently";
+  const simpleCaptionR = night ? "Heat is being retained here" : "Sunlight is being captured well";
+  const captionL = playing ? simpleCaptionL : insights.L[insightIdx % insights.L.length];
+  const captionR = playing ? simpleCaptionR : insights.R[insightIdx % insights.R.length];
+
+  if (!data) {
+    return (
+      <div className="bg-panel border border-line rounded-xl overflow-hidden flex flex-col items-center justify-center h-full min-h-[420px] gap-2 text-center px-6">
+        <span className="text-3xl">🏗️</span>
+        <p className="text-muted text-[13.5px] leading-relaxed max-w-xs">
+          The 3D comparison will appear here once a design has been generated.
+        </p>
+      </div>
+    );
+  }
+
+  if (sceneError) {
+    return (
+      <div className="bg-panel border border-line rounded-xl overflow-hidden flex flex-col items-center justify-center h-full min-h-[420px] gap-2 text-center px-6">
+        <span className="text-3xl">⚠️</span>
+        <p className="text-muted text-[13.5px] leading-relaxed max-w-xs">
+          The 3D view couldn't load in this browser. Your numbers and charts below are still accurate.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-panel border border-line rounded-xl overflow-hidden flex flex-col h-full">
       <div className="px-3 py-2 border-b border-line flex flex-wrap items-center justify-between gap-2">
-        <div className="flex bg-panel2 border border-line rounded-lg p-[3px] gap-[3px]">
-          {["baseline", "optimized"].map((m) => (
-            <button key={m} onClick={() => setDesignMode(m)}
-              className={`px-3 py-1 rounded-md text-[11.5px] font-medium ${designMode === m ? "bg-amber text-ink" : "text-muted"}`}>
-              {m === "baseline" ? "Baseline Design" : "Optimized Design"}
-            </button>
-          ))}
-        </div>
-        {comparison && (
-          <div className="flex gap-3 text-[11.5px] font-mono">
-            <span className="text-glacier">{comparison.nightTemperatureGain >= 0 ? "+" : ""}{comparison.nightTemperatureGain}°C at night</span>
-            <span className="text-sage">-{comparison.energySavingPercent}% heat loss</span>
-          </div>
-        )}
-      </div>
-
-      <div ref={wrapRef} className="flex-1 relative min-h-[420px]">
-        {activeLabel && (
-          <div ref={tooltipRef} className="absolute pointer-events-none bg-[#0B1420] border border-amber text-amber text-[12px] px-2.5 py-1.5 rounded-md z-10 max-w-[240px] leading-snug shadow-lg">
-            {activeLabel}
-          </div>
-        )}
-
-        <div className="absolute top-2 left-2 flex flex-col gap-1 pointer-events-none">
-          <span className="bg-[#0B1420]/85 border border-line text-[11px] text-muted px-2 py-1 rounded-md font-mono">
+        <span className="text-muted text-[11px] uppercase tracking-wide font-medium">Baseline vs Optimized — synchronized view</span>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowSection((v) => !v)}
+            className={`px-3 py-1 rounded-md text-[11.5px] font-medium border ${showSection ? "border-amber text-amber" : "border-line text-muted"}`}>
+            Wall section {showSection ? "on" : "off"}
+          </button>
+          <span className="bg-panel2 border border-line text-[11px] text-muted px-2 py-1 rounded-md font-mono">
             {String(hour).padStart(2, "0")}:00 · {timeLabel(hour)}
           </span>
-          <span className="bg-[#0B1420]/85 border border-line text-[11px] text-amber px-2 py-1 rounded-md font-mono">
-            {modeLabel} · {classification?.label || classification?.key}
-          </span>
         </div>
+      </div>
 
-        {insights.length > 0 && (
-          <div className="absolute bottom-2 left-2 right-2 pointer-events-none flex justify-center">
-            <div className="bg-[#0B1420]/90 border border-glacier/40 text-glacier text-[12px] px-3 py-1.5 rounded-full max-w-[92%] text-center leading-snug">
-              💡 {insights[insightIdx % insights.length]}
+      <div ref={containerRef} className="flex-1 relative min-h-[420px] flex">
+        <div ref={wrapLRef} className="w-1/2 h-full relative border-r border-line">
+          <div className="absolute top-2 left-2 z-30 pointer-events-none bg-[#0B1420]/85 border border-ember/50 text-ember text-[12px] font-semibold px-2.5 py-1 rounded-md">
+            Baseline Design ❌
+          </div>
+          {hoverLabel.L && (
+            <div className="absolute bottom-12 left-2 right-2 z-30 pointer-events-none bg-[#0B1420] border border-ember text-ember text-[11.5px] px-2.5 py-1.5 rounded-md leading-snug">
+              {hoverLabel.L}
+            </div>
+          )}
+          <div className="absolute bottom-2 left-2 right-2 z-30 pointer-events-none flex justify-center">
+            <div className="bg-[#0B1420]/90 border border-ember/40 text-ember text-[11.5px] px-3 py-1.5 rounded-full text-center leading-snug">
+              {captionL}
             </div>
           </div>
-        )}
-
-        <div className="absolute top-2 right-2 flex gap-1.5 text-[10.5px] font-mono pointer-events-none">
-          <span className="bg-[#0B1420]/85 border border-line px-2 py-1 rounded-md flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ background: "#3a7cd4" }} /> cool
-          </span>
-          <span className="bg-[#0B1420]/85 border border-line px-2 py-1 rounded-md flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ background: "#e0402e" }} /> hot
-          </span>
+          {showSection && (
+            <div className="absolute top-2 right-2 z-30 pointer-events-none bg-[#0B1420]/85 border border-line text-muted text-[10.5px] px-2 py-1 rounded-md">
+              No insulation
+            </div>
+          )}
         </div>
+        <div ref={wrapRRef} className="w-1/2 h-full relative">
+          <div className="absolute top-2 left-2 z-30 pointer-events-none bg-[#0B1420]/85 border border-sage/50 text-sage text-[12px] font-semibold px-2.5 py-1 rounded-md">
+            Optimized Design ✅
+          </div>
+          {hoverLabel.R && (
+            <div className="absolute bottom-12 left-2 right-2 z-30 pointer-events-none bg-[#0B1420] border border-sage text-sage text-[11.5px] px-2.5 py-1.5 rounded-md leading-snug">
+              {hoverLabel.R}
+            </div>
+          )}
+          <div className="absolute bottom-2 left-2 right-2 z-30 pointer-events-none flex justify-center">
+            <div className="bg-[#0B1420]/90 border border-sage/40 text-sage text-[11.5px] px-3 py-1.5 rounded-full text-center leading-snug">
+              {captionR}
+            </div>
+          </div>
+          {showSection && (
+            <div className="absolute top-2 right-2 z-30 pointer-events-none bg-[#0B1420]/85 border border-line text-muted text-[10.5px] px-2 py-1 rounded-md">
+              3-layer insulated wall
+            </div>
+          )}
+        </div>
+        <div ref={overlayRef} className="absolute inset-0 z-20" style={{ cursor: "grab", touchAction: "none" }} />
+      </div>
+
+      <div className="px-4 py-2 border-t border-line flex flex-wrap items-center gap-x-6 gap-y-1 text-[11.5px] font-mono">
+        <span className="text-muted">Heat retention: <span className="text-ember">{baseRetention}%</span> <span className="text-line">|</span> <span className="text-sage">{optRetention}%</span></span>
+        <span className="text-muted">Energy saving: <span className="text-sage">+{energySaving}%</span></span>
+        <span className="text-muted">Comfort score: <span className="text-sage">+{comfortDelta}</span></span>
       </div>
 
       <div className="px-4 py-2.5 border-t border-line flex items-center gap-3 flex-wrap">
-        <span className="font-mono text-[12.5px] text-muted whitespace-nowrap">
-          {String(hour).padStart(2, "0")}:00 · indoor {(designMode === "optimized" ? data.simulation.optimizedIndoor : data.simulation.baselineIndoor)[hour]?.toFixed(1)}°C
-        </span>
+        <span className="font-mono text-[12.5px] text-muted whitespace-nowrap">{String(hour).padStart(2, "0")}:00</span>
         <input type="range" min={0} max={23} step={1} value={hour} onChange={(e) => setHour(Number(e.target.value))} className="flex-1 accent-amber min-w-[120px]" />
         <button onClick={() => setPlaying((p) => !p)} className="font-mono text-[12.5px] text-muted whitespace-nowrap cursor-pointer hover:text-amber">
-          {playing ? "⏸ pause" : "▶ animate"}
+          {playing ? "⏸ pause" : "▶ play simulation"}
         </button>
         <div className="flex gap-1">
-          {SPEEDS.map((s) => (
-            <button key={s} onClick={() => setSpeed(s)}
-              className={`font-mono text-[11px] px-1.5 py-0.5 rounded border ${speed === s ? "border-amber text-amber" : "border-line text-muted"}`}>
-              {s}×
+          {SPEEDS.map((sp) => (
+            <button key={sp} onClick={() => setSpeed(sp)} className={`font-mono text-[11px] px-1.5 py-0.5 rounded border ${speed === sp ? "border-amber text-amber" : "border-line text-muted"}`}>
+              {sp}×
             </button>
           ))}
         </div>

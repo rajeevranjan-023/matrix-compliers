@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { fetchLocations, generateDesign } from "./lib/api";
 import InputPanel from "./components/InputPanel";
 import Building3D from "./components/Building3D";
 import SummaryCards from "./components/SummaryCards";
 import MinimalMetrics from "./components/MinimalMetrics";
 import WhyDesignSection from "./components/WhyDesignSection";
+import SmartSuggestions from "./components/SmartSuggestions";
+import QuickAdjustDrawer from "./components/QuickAdjustDrawer";
 import Tabs from "./components/Tabs";
 import SimulationChart from "./components/SimulationChart";
 import ComfortScore from "./components/ComfortScore";
@@ -14,6 +16,7 @@ import SustainabilityPanel from "./components/SustainabilityPanel";
 import MultiLocationPanel from "./components/MultiLocationPanel";
 import PdfReportButton from "./components/PdfReportButton";
 import Modal from "./components/Modal";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 const TABS = [
   { id: "simulation", label: "Thermal Simulation" },
@@ -49,6 +52,25 @@ export default function App() {
   const [error, setError] = useState(null);
   const [view, setView] = useState("structure");
   const [tab, setTab] = useState("simulation");
+  const [updating, setUpdating] = useState(false);
+  const liveTimer = useRef(null);
+  const inputsRef = useRef(inputs);
+  useEffect(() => { inputsRef.current = inputs; }, [inputs]);
+
+  function handleLiveChange() {
+    setUpdating(true);
+    clearTimeout(liveTimer.current);
+    liveTimer.current = setTimeout(async () => {
+      try {
+        const result = await generateDesign(inputsRef.current);
+        setData(result);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setUpdating(false);
+      }
+    }, 550);
+  }
 
   useEffect(() => {
     fetchLocations()
@@ -127,24 +149,27 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <div className="h-[560px]"><Building3D data={data} view={view} /></div>
+            <div className="h-[640px]"><ErrorBoundary resetKey={data}><Building3D data={data} view={view} /></ErrorBoundary></div>
           </div>
           <div className="lg:flex-[3] bg-panel border border-line rounded-xl p-4">
             <h3 className="text-muted text-[11px] uppercase tracking-wide font-medium mb-3">Key metrics</h3>
-            <MinimalMetrics data={data} />
+            <ErrorBoundary resetKey={data}><MinimalMetrics data={data} /></ErrorBoundary>
           </div>
         </div>
 
-        <WhyDesignSection data={data} />
+        <ErrorBoundary resetKey={data}><WhyDesignSection data={data} /></ErrorBoundary>
+        <ErrorBoundary resetKey={data}><SmartSuggestions data={data} /></ErrorBoundary>
 
         <div>
           <Tabs tabs={TABS} active={tab} onChange={setTab} />
           <div className="pt-5">
-            {tab === "simulation" && <SimulationChart data={data} />}
-            {tab === "comfort" && <ComfortScore data={data} />}
-            {tab === "comparison" && <ComparisonPanel data={data} />}
-            {tab === "materials" && <MaterialTable data={data} />}
-            {tab === "sustainability" && <SustainabilityPanel data={data} />}
+            <ErrorBoundary resetKey={`${tab}-${data ? 1 : 0}`}>
+              {tab === "simulation" && <SimulationChart data={data} />}
+              {tab === "comfort" && <ComfortScore data={data} />}
+              {tab === "comparison" && <ComparisonPanel data={data} />}
+              {tab === "materials" && <MaterialTable data={data} />}
+              {tab === "sustainability" && <SustainabilityPanel data={data} />}
+            </ErrorBoundary>
           </div>
         </div>
       </div>
@@ -160,6 +185,8 @@ export default function App() {
         </select>
         <MultiLocationPanel data={data} compareData={compareData} />
       </Modal>
+
+      <QuickAdjustDrawer inputs={inputs} setInputs={setInputs} onLiveChange={handleLiveChange} updating={updating} />
     </div>
   );
 }

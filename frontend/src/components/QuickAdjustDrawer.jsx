@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 
 function Seg({ value, onChange, options }) {
   return (
@@ -21,10 +21,10 @@ function Row({ label, children }) {
   );
 }
 
-
-export default function QuickAdjustDrawer({ inputs, setInputs, onLiveChange, glazingOptions, ventilationOptions }) {
+export default function QuickAdjustDrawer({ inputs, setInputs, onLiveChange, updating }) {
   const [open, setOpen] = useState(false);
   const set = (patch) => { setInputs((prev) => ({ ...prev, ...patch })); onLiveChange(); };
+  const setSpecial = (key, val) => { setInputs((prev) => ({ ...prev, special: { ...prev.special, [key]: val } })); onLiveChange(); };
 
   return (
     <div className="fixed right-0 top-1/2 -translate-y-1/2 z-30">
@@ -37,34 +37,43 @@ export default function QuickAdjustDrawer({ inputs, setInputs, onLiveChange, gla
       </button>
       {open && (
         <div className="absolute right-full top-1/2 -translate-y-1/2 w-[280px] max-h-[80vh] overflow-y-auto bg-panel border border-line rounded-l-xl rounded-r-none shadow-2xl p-4 mr-0">
-          <h4 className="text-[12px] uppercase tracking-wide text-muted mb-3">Live 3D adjustments</h4>
+          <h4 className="text-[12px] uppercase tracking-wide text-muted mb-3 flex items-center justify-between">
+            Live adjustments {updating && <span className="text-amber font-mono normal-case">updating…</span>}
+          </h4>
 
           <Row label="Floors">
-            <Seg value={inputs.floors} onChange={(v) => set({ floors: v })} options={[1, 2, 3].map((f) => ({ val: f, label: String(f) }))} />
+            <Seg value={inputs.floors} onChange={(v) => set({ floors: v })} options={[1, 2, 3, 4].map((f) => ({ val: f, label: String(f) }))} />
           </Row>
-          <Row label="Building area (sq ft)">
+          <Row label="Width (m)">
             <div className="flex items-center gap-2">
-              <input type="range" min={80} max={2500} step={10} value={inputs.areaSqft}
-                onChange={(e) => set({ areaSqft: Number(e.target.value) })} className="flex-1 accent-amber" />
-              <span className="font-mono text-[12px] w-12 text-right">{inputs.areaSqft}</span>
+              <input type="range" min={3} max={20} step={0.5} value={inputs.widthM}
+                onChange={(e) => set({ widthM: Number(e.target.value) })} className="flex-1 accent-amber" />
+              <span className="font-mono text-[12px] w-10 text-right">{inputs.widthM}</span>
             </div>
           </Row>
-          <Row label="Roof type">
+          <Row label="Length (m)">
+            <div className="flex items-center gap-2">
+              <input type="range" min={3} max={20} step={0.5} value={inputs.lengthM}
+                onChange={(e) => set({ lengthM: Number(e.target.value) })} className="flex-1 accent-amber" />
+              <span className="font-mono text-[12px] w-10 text-right">{inputs.lengthM}</span>
+            </div>
+          </Row>
+          <Row label="Roof shape">
             <Seg value={inputs.roofType} onChange={(v) => set({ roofType: v })}
               options={["flat", "pitched", "vaulted"].map((r) => ({ val: r, label: r[0].toUpperCase() + r.slice(1) }))} />
           </Row>
-          <Row label="Roof finish">
-            <Seg value={inputs.roofFinish} onChange={(v) => set({ roofFinish: v })}
-              options={[{ val: "standard", label: "Std" }, { val: "reflective", label: "Cool" }, { val: "green", label: "Green" }]} />
+          <Row label="Roof material">
+            <Seg value={inputs.roofMaterial} onChange={(v) => set({ roofMaterial: v })}
+              options={[{ val: "concrete", label: "Concrete" }, { val: "metal", label: "Metal" }, { val: "thatch", label: "Thatch" }, { val: "insulated", label: "Insulated" }]} />
           </Row>
-          <Row label="Orientation (azimuth °)">
+          <Row label="Which way it faces">
             <div className="flex items-center gap-2">
               <input type="range" min={0} max={359} step={5} value={inputs.azimuthDeg}
                 onChange={(e) => set({ orientationMode: "manual", azimuthDeg: Number(e.target.value) })} className="flex-1 accent-amber" />
               <span className="font-mono text-[12px] w-10 text-right">{inputs.azimuthDeg}°</span>
             </div>
           </Row>
-          <Row label="Window-to-wall ratio">
+          <Row label="Window size">
             <div className="flex items-center gap-2">
               <input type="range" min={5} max={40} step={1} value={Math.round(inputs.windowWallRatio * 100)}
                 onChange={(e) => set({ windowWallMode: "manual", windowWallRatio: Number(e.target.value) / 100 })} className="flex-1 accent-amber" />
@@ -73,32 +82,38 @@ export default function QuickAdjustDrawer({ inputs, setInputs, onLiveChange, gla
           </Row>
           <Row label="Wall thickness (mm)">
             <div className="flex items-center gap-2">
-              <input type="range" min={100} max={600} step={10} value={inputs.wallThicknessMm}
-                onChange={(e) => set({ wallInsulationMode: "manual", wallThicknessMm: Number(e.target.value) })} className="flex-1 accent-amber" />
-              <span className="font-mono text-[12px] w-12 text-right">{inputs.wallThicknessMm}</span>
+              <input type="range" min={80} max={700} step={10} value={inputs.wallThicknessMM}
+                onChange={(e) => set({ wallThicknessMM: Number(e.target.value) })} className="flex-1 accent-amber" />
+              <span className="font-mono text-[12px] w-12 text-right">{inputs.wallThicknessMM}</span>
             </div>
           </Row>
-          <Row label="Glazing">
-            <select value={inputs.glazingType} onChange={(e) => set({ glazingMode: "manual", glazingType: e.target.value })}
-              className="w-full bg-panel2 border border-line rounded-lg px-2 py-1.5 text-[12px]">
-              {(glazingOptions || [{ id: "single", label: "Single" }, { id: "double", label: "Double" }, { id: "triple", label: "Triple" }]).map((g) => (
-                <option key={g.id} value={g.id}>{g.label}</option>
-              ))}
-            </select>
+          <Row label="Insulation">
+            <Seg value={inputs.insulationLevel} onChange={(v) => set({ insulationLevel: v })}
+              options={[{ val: "none", label: "None" }, { val: "basic", label: "Basic" }, { val: "high", label: "High" }]} />
           </Row>
-          <Row label="Ventilation strategy">
-            <select value={inputs.ventilationType} onChange={(e) => set({ ventilationMode: "manual", ventilationType: e.target.value })}
-              className="w-full bg-panel2 border border-line rounded-lg px-2 py-1.5 text-[12px]">
-              {(ventilationOptions || [{ id: "natural", label: "Natural" }, { id: "cross", label: "Cross-ventilation" }, { id: "hrv", label: "Mechanical (HRV)" }]).map((v) => (
-                <option key={v.id} value={v.id}>{v.label}</option>
-              ))}
-            </select>
+          <Row label="Glass">
+            <Seg value={inputs.glassType} onChange={(v) => set({ glassType: v })}
+              options={[{ val: "single", label: "Single" }, { val: "double", label: "Double" }]} />
           </Row>
-          <Row label="Balcony (2+ floors)">
-            <Seg value={inputs.balcony} onChange={(v) => set({ balcony: v })}
-              options={[{ val: "auto", label: "Auto" }, { val: "on", label: "On" }, { val: "off", label: "Off" }]} />
+          <Row label="Ventilation">
+            <Seg value={inputs.ventilationType} onChange={(v) => set({ ventilationType: v })}
+              options={[{ val: "natural", label: "Natural" }, { val: "mechanical", label: "Mechanical" }, { val: "none", label: "None" }]} />
           </Row>
-          <p className="text-muted text-[10.5px] leading-relaxed mt-1">Changes here re-run the simulation automatically after a short pause.</p>
+          <Row label="Wall material">
+            <Seg value={inputs.materialPref} onChange={(v) => set({ materialPref: v })}
+              options={[{ val: "auto", label: "Auto" }, { val: "brick", label: "Brick" }, { val: "stone", label: "Stone" }, { val: "wood", label: "Wood" }]} />
+          </Row>
+          <Row label="Tough conditions">
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => setSpecial("snow", !inputs.special?.snow)}
+                className={`px-2 py-1 rounded-md text-[11px] border ${inputs.special?.snow ? "border-glacier text-glacier bg-glacier/10" : "border-line text-muted"}`}>❄️ Snow</button>
+              <button onClick={() => setSpecial("heatwave", !inputs.special?.heatwave)}
+                className={`px-2 py-1 rounded-md text-[11px] border ${inputs.special?.heatwave ? "border-ember text-ember bg-ember/10" : "border-line text-muted"}`}>🔥 Heatwave</button>
+              <button onClick={() => setSpecial("wind", !inputs.special?.wind)}
+                className={`px-2 py-1 rounded-md text-[11px] border ${inputs.special?.wind ? "border-sage text-sage bg-sage/10" : "border-line text-muted"}`}>💨 Wind</button>
+            </div>
+          </Row>
+          <p className="text-muted text-[10.5px] leading-relaxed mt-1">Every change here updates the 3D model and the graph a moment later.</p>
         </div>
       )}
     </div>

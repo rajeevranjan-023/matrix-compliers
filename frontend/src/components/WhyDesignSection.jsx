@@ -5,16 +5,26 @@ const LABELS = {
   windowPlacement: "Window placement", roofDesign: "Roof design",
 };
 
-
 export default function WhyDesignSection({ data }) {
   const [open, setOpen] = useState(false);
   const { design } = data;
+  const quickLines = Object.keys(LABELS).map((f) => design[f].why).slice(0, 3);
+
   return (
     <div className="bg-panel border border-line rounded-xl p-4">
-      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between text-left">
-        <h3 className="font-display text-[15px] font-semibold">Why this design?</h3>
-        <span className="text-muted text-sm">{open ? "▴ hide" : "▾ show"}</span>
+      <h3 className="font-display text-[15px] font-semibold mb-3">Why this works</h3>
+      <ul className="list-none m-0 p-0 space-y-2 mb-3">
+        {quickLines.map((line, i) => (
+          <li key={i} className="text-[14px] text-slate-200 leading-relaxed flex gap-2">
+            <span className="text-amber">•</span>{line}
+          </li>
+        ))}
+      </ul>
+
+      <button onClick={() => setOpen((o) => !o)} className="text-[12px] text-muted hover:text-amber">
+        {open ? "▴ hide the details" : "▾ see the full reasoning"}
       </button>
+
       {open && (
         <div className="mt-4">
           <ul className="list-none m-0 p-0">
@@ -23,12 +33,12 @@ export default function WhyDesignSection({ data }) {
                 <div className="text-muted text-[11px] uppercase tracking-wide mb-1">{LABELS[field]}</div>
                 <div className="text-[14px] leading-relaxed mb-1.5">{design[field].value}</div>
                 <div className="text-[12.5px] text-muted leading-relaxed pl-3.5 border-l-2 border-amber">
-                  <span className="text-amber font-semibold">Why:</span> {design[field].why}
+                  {design[field].why}
                 </div>
               </li>
             ))}
             <li className="py-3">
-              <div className="text-muted text-[11px] uppercase tracking-wide mb-1">Additional features</div>
+              <div className="text-muted text-[11px] uppercase tracking-wide mb-1">Also included</div>
               <ul className="list-disc list-inside space-y-1 text-[14px]">
                 {design.features.map((f) => <li key={f}>{f}</li>)}
               </ul>
