@@ -17,4 +17,4 @@ export async function generateDesign(inputs) {
     throw new Error(body.error || "Failed to generate design");
   }
   return res.json();
-}
+} 
