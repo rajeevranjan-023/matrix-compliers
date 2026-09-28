@@ -34,6 +34,10 @@ function glowTexture() {
   return tex;
 }
 
+function tsHforLabel(totalHeight) {
+  return totalHeight * 0.42 * 0.5 + 0.25;
+}
+
 function safeNum(v, fallback) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -115,6 +119,20 @@ function lerpColor(hexA, hexB, t) {
   const a = new THREE.Color(hexA), b = new THREE.Color(hexB);
   return a.lerp(b, t);
 }
+const BASE_LABELS = [
+  { id: "smallWindow", text: "Small window" },
+  { id: "thinWall", text: "Thin wall" },
+  { id: "flatRoof", text: "Bare roof" },
+  { id: "singleDoor", text: "Single door" },
+];
+const OPT_LABELS = [
+  { id: "southGlazing", text: "South glazing" },
+  { id: "thermalMass", text: "Thermal mass wall" },
+  { id: "insulatedRoof", text: "Insulated roof" },
+  { id: "airlock", text: "Airlock entry" },
+  { id: "heatStorage", text: "Heat storage zone" },
+];
+
 function timeLabel(h) {
   if (h >= 5 && h < 8) return "Early morning";
   if (h >= 8 && h < 12) return "Morning";
@@ -123,6 +141,71 @@ function timeLabel(h) {
   if (h >= 18 && h < 21) return "Evening";
   return "Night";
 }
+function textTexture(text, color, size = 92) {
+  const c = document.createElement("canvas");
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, 128, 128);
+  ctx.font = `700 ${size}px Arial`;
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 64, 68);
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
+function buildCompass(scene) {
+  const radius = 9.5;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius - 0.08, radius + 0.08, 64), new THREE.MeshBasicMaterial({ color: 0x3a4a5e, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.01;
+  scene.add(ring);
+
+  const southWedgeGeo = new THREE.RingGeometry(radius - 0.5, radius + 0.5, 24, 1, (Math.PI / 2) - 0.4, 0.8);
+  const southWedge = new THREE.Mesh(southWedgeGeo, new THREE.MeshBasicMaterial({ color: 0xe8934a, transparent: true, opacity: 0.35, side: THREE.DoubleSide }));
+  southWedge.rotation.x = -Math.PI / 2;
+  southWedge.position.y = 0.012;
+  scene.add(southWedge);
+
+  const dirs = [
+    { label: "N", x: 0, z: -radius, color: "#8FA0B5" },
+    { label: "S", x: 0, z: radius, color: "#E8934A" },
+    { label: "E", x: radius, z: 0, color: "#8FA0B5" },
+    { label: "W", x: -radius, z: 0, color: "#8FA0B5" },
+  ];
+  dirs.forEach((d) => {
+    const isSouth = d.label === "S";
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: textTexture(d.label, d.color), transparent: true, depthWrite: false }));
+    sp.scale.set(isSouth ? 1.1 : 0.85, isSouth ? 1.1 : 0.85, 1);
+    sp.position.set(d.x, isSouth ? 0.9 : 0.7, d.z);
+    scene.add(sp);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(isSouth ? 0.16 : 0.1, 12, 12), new THREE.MeshBasicMaterial({ color: isSouth ? 0xe8934a : 0x5a6a7e }));
+    dot.position.set(d.x, 0.1, d.z);
+    scene.add(dot);
+  });
+
+  const southLabelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: textTexture("☀", "#E8934A", 70), transparent: true, depthWrite: false }));
+  southLabelSprite.scale.set(0.7, 0.7, 1);
+  southLabelSprite.position.set(0, 1.7, radius);
+  scene.add(southLabelSprite);
+}
+function buildSunPath(scene) {
+  const points = [];
+  for (let i = 0; i <= 40; i++) {
+    const frac = i / 40;
+    const bearingRad = ((90 + frac * 180) * Math.PI) / 180;
+    const elevRad = Math.sin(frac * Math.PI) * 1.05;
+    const r = 18;
+    points.push(new THREE.Vector3(Math.sin(bearingRad) * Math.cos(elevRad) * r, Math.max(0.3, Math.sin(elevRad) * r), -Math.cos(bearingRad) * Math.cos(elevRad) * r));
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(points);
+  const mat = new THREE.LineDashedMaterial({ color: 0xffd89a, transparent: true, opacity: 0.35, dashSize: 0.6, gapSize: 0.4 });
+  const line = new THREE.Line(geo, mat);
+  line.computeLineDistances();
+  scene.add(line);
+}
+
 function useCountUp(target, decimals = 0) {
   const [val, setVal] = useState(0);
   const raf = useRef(null);
@@ -187,6 +270,9 @@ function makeSide(wrapEl) {
   ground.receiveShadow = true;
   scene.add(ground);
 
+  buildCompass(scene);
+  buildSunPath(scene);
+
   const buildingGroup = new THREE.Group();
   scene.add(buildingGroup);
 
@@ -208,7 +294,7 @@ function makeSide(wrapEl) {
   return {
     wrapEl, scene, camera, renderer, ambientLight, sunLight, sunMesh, ground,
     buildingGroup, interiorGlow, interiorSprite, heatLossGroup, airflowGroup, solarRayGroup, sectionGroup, weatherGroup,
-    hoverable: [], dims: {}, ventAnchors: [], windowAnchors: [],
+    hoverable: [], dims: {}, ventAnchors: [], windowAnchors: [], labelAnchors: null, shutters: [],
   };
 }
 
@@ -233,6 +319,7 @@ export default function Building3D({ data: rawData, view }) {
   const transitionRef = useRef({ L: null, R: null });
   const clockRef = useRef({ start: performance.now() });
   const sunDirRef = useRef(new THREE.Vector3(0, 1, 0));
+  const labelElsRef = useRef({ L: {}, R: {} });
 
   const [ready, setReady] = useState(false);
   const [hour, setHour] = useState(12);
@@ -363,6 +450,20 @@ export default function Building3D({ data: rawData, view }) {
 
         L.renderer.render(L.scene, L.camera);
         R.renderer.render(R.scene, R.camera);
+
+        [["L", L], ["R", R]].forEach(([key, s]) => {
+          if (!s.labelAnchors) return;
+          const els = labelElsRef.current[key];
+          const w = s.wrapEl.clientWidth, h = s.wrapEl.clientHeight;
+          Object.keys(s.labelAnchors).forEach((id) => {
+            const el = els[id];
+            if (!el) return;
+            const v = s.labelAnchors[id].clone().applyMatrix4(s.buildingGroup.matrixWorld).project(s.camera);
+            const visible = v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05;
+            el.style.opacity = visible ? "1" : "0";
+            el.style.transform = `translate(${((v.x * 0.5 + 0.5) * w).toFixed(1)}px, ${((-v.y * 0.5 + 0.5) * h).toFixed(1)}px) translate(-50%, -110%)`;
+          });
+        });
       } catch (err) {
         console.error("Building3D animate frame error:", err);
       }
@@ -532,6 +633,8 @@ export default function Building3D({ data: rawData, view }) {
     });
 
     const windowAnchors = [];
+    let southGlazingAnchor = null;
+    s.shutters = [];
     for (let f = 0; f < floors; f++) {
       const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, Math.max(0.4, winH)), winMat.clone());
       win.position.set(0, f * floorH + floorH * 0.55, length / 2 + 0.02);
@@ -542,6 +645,15 @@ export default function Building3D({ data: rawData, view }) {
       s.buildingGroup.add(win);
       s.hoverable.push(win);
       windowAnchors.push(win.userData.anchor);
+      if (f === 0) southGlazingAnchor = win.userData.anchor;
+
+      if (!isBaseline) {
+        const shutter = new THREE.Mesh(new THREE.PlaneGeometry(winW * 1.02, Math.max(0.4, winH) * 1.02), new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9, transparent: true, opacity: 0 }));
+        shutter.position.set(0, f * floorH + floorH * 0.55, length / 2 + 0.05);
+        shutter.rotation.y = Math.PI;
+        s.buildingGroup.add(shutter);
+        s.shutters.push(shutter);
+      }
     }
 
     if (!isBaseline) {
@@ -568,12 +680,53 @@ export default function Building3D({ data: rawData, view }) {
       });
     }
 
-    const door = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 1.95), new THREE.MeshStandardMaterial({ color: 0x2a2118, roughness: 0.6 }));
-    door.position.set(width * 0.28, 0.975, length / 2 + 0.015);
-    door.rotation.y = Math.PI;
-    door.userData.label = "Main entrance";
-    s.buildingGroup.add(door);
-    s.hoverable.push(door);
+    let heatStorageAnchor = null;
+    if (!isBaseline) {
+      const tsW = Math.min(width * 0.5, 2.4), tsH = totalHeight * 0.42;
+      const tsY = totalHeight * 0.3, tsZ = length / 2;
+      const glass = new THREE.Mesh(new THREE.PlaneGeometry(tsW, tsH), new THREE.MeshPhysicalMaterial({ color: 0xbfe4f5, roughness: 0.04, transparent: true, opacity: 0.35, transmission: 0.7 }));
+      glass.position.set(-width * 0.22, tsY, tsZ + 0.22);
+      glass.rotation.y = Math.PI;
+      glass.userData.label = "Sunspace glazing — traps solar heat against a dark wall";
+      glass.userData.part = "window";
+      s.buildingGroup.add(glass);
+      s.hoverable.push(glass);
+      const dark = new THREE.Mesh(new THREE.PlaneGeometry(tsW * 0.95, tsH * 0.95), new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 0.75 }));
+      dark.position.set(-width * 0.22, tsY, tsZ + 0.02);
+      dark.rotation.y = Math.PI;
+      dark.userData.label = "Dark thermal-mass wall — absorbs and stores heat";
+      dark.userData.part = "trombe";
+      s.buildingGroup.add(dark);
+      s.hoverable.push(dark);
+      heatStorageAnchor = new THREE.Vector3(-width * 0.22, tsY, tsZ + 0.15);
+
+      const cladding = new THREE.Mesh(new THREE.BoxGeometry(width * 0.98, totalHeight * 0.98, 0.03), new THREE.MeshStandardMaterial({ color: 0xd8c9a8, roughness: 0.9, transparent: true, opacity: 0.5 }));
+      cladding.position.set(0, totalHeight / 2, length / 2 + 0.01);
+      s.buildingGroup.add(cladding);
+    }
+
+    const doorX = width * 0.28;
+    if (isBaseline) {
+      const door = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 1.95), new THREE.MeshStandardMaterial({ color: 0x2a2118, roughness: 0.6 }));
+      door.position.set(doorX, 0.975, length / 2 + 0.015);
+      door.rotation.y = Math.PI;
+      door.userData.label = "Single door — cold air rushes in every time it opens";
+      s.buildingGroup.add(door);
+      s.hoverable.push(door);
+    } else {
+      [-0.26, 0.26].forEach((off, i) => {
+        const leaf = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 1.95), new THREE.MeshStandardMaterial({ color: i === 0 ? 0x4a3420 : 0x2a2118, roughness: 0.6 }));
+        leaf.position.set(doorX + off, 0.975, length / 2 + 0.015);
+        leaf.rotation.y = Math.PI;
+        leaf.userData.label = "Double-door entry — keeps cold air from rushing in";
+        s.buildingGroup.add(leaf);
+        s.hoverable.push(leaf);
+      });
+      const porch = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.05, 0.7), new THREE.MeshStandardMaterial({ color: 0x8a8a86, roughness: 0.8 }));
+      porch.position.set(doorX, 2.05, length / 2 + 0.35);
+      porch.castShadow = true;
+      s.buildingGroup.add(porch);
+    }
 
     const ventAnchors = [];
     if (!isBaseline && inputs.ventilationType !== "none") {
@@ -612,6 +765,21 @@ export default function Building3D({ data: rawData, view }) {
     buildSection(side, mode, width);
 
     s.dims = { width, length, totalHeight, floors };
+    const roofTopY = totalHeight + (inputs.roofType === "pitched" && !isBaseline ? Math.min(width, length) * 0.55 : Math.max(width, length) * 0.06) + 0.3;
+    s.labelAnchors = isBaseline
+      ? {
+          smallWindow: (southGlazingAnchor || new THREE.Vector3(0, totalHeight * 0.55, length / 2)).clone(),
+          thinWall: new THREE.Vector3(-width * 0.38, totalHeight * 0.3, length / 2),
+          flatRoof: new THREE.Vector3(0, roofTopY, 0),
+          singleDoor: new THREE.Vector3(doorX, 2.1, length / 2),
+        }
+      : {
+          southGlazing: (southGlazingAnchor || new THREE.Vector3(0, totalHeight * 0.55, length / 2)).clone().add(new THREE.Vector3(width * 0.1, winH * 0.4, 0)),
+          thermalMass: new THREE.Vector3(width * 0.38, totalHeight * 0.35, length / 2),
+          insulatedRoof: new THREE.Vector3(0, roofTopY, 0),
+          airlock: new THREE.Vector3(doorX, 2.3, length / 2 + 0.3),
+          heatStorage: (heatStorageAnchor || new THREE.Vector3(0, 1, length / 2)).clone().add(new THREE.Vector3(0, -tsHforLabel(totalHeight), 0)),
+        };
     s.ventAnchors = ventAnchors;
     s.windowAnchors = windowAnchors;
     s.buildingGroup.rotation.y = isBaseline ? WRONG_ROTATION : ((180 - (geometry.azimuth ?? 180)) * Math.PI) / 180;
@@ -832,7 +1000,7 @@ export default function Building3D({ data: rawData, view }) {
     const bearingRad = (bearingDeg * Math.PI) / 180;
     const R = 18, elevRad = elevation * 1.05;
     const dirX = Math.sin(bearingRad) * Math.cos(elevRad);
-    const dirZ = Math.cos(bearingRad) * Math.cos(elevRad);
+    const dirZ = -Math.cos(bearingRad) * Math.cos(elevRad);
     const dirY = Math.sin(elevRad);
     sunDirRef.current.set(dirX, Math.max(0.02, dirY), dirZ).normalize();
 
@@ -861,6 +1029,8 @@ export default function Building3D({ data: rawData, view }) {
       s.interiorSprite.material.opacity = warmth * 0.5;
       s.interiorSprite.position.set(0, s.dims.totalHeight ? s.dims.totalHeight * 0.55 : 1.6, 0);
       s.interiorGlow.position.copy(s.interiorSprite.position);
+      const shuttersClosed = h >= 19 || h < 6;
+      (s.shutters || []).forEach((sh) => { sh.material.opacity = shuttersClosed ? 0.92 : 0; });
       } catch (err) {
         console.error("Building3D updateSun error:", err);
       }
@@ -947,6 +1117,11 @@ export default function Building3D({ data: rawData, view }) {
           <div className="absolute top-2 left-2 z-30 pointer-events-none bg-[#0B1420]/85 border border-ember/50 text-ember text-[12px] font-semibold px-2.5 py-1 rounded-md">
             Baseline Design ❌
           </div>
+          {BASE_LABELS.map((l) => (
+            <span key={l.id} ref={(el) => { labelElsRef.current.L[l.id] = el; }}
+              className="absolute top-0 left-0 z-[25] pointer-events-none whitespace-nowrap bg-[#0B1420]/80 border border-ember/40 text-ember text-[10.5px] px-1.5 py-0.5 rounded"
+              style={{ opacity: 0, willChange: "transform" }}>{l.text}</span>
+          ))}
           {hoverLabel.L && (
             <div className="absolute bottom-12 left-2 right-2 z-30 pointer-events-none bg-[#0B1420] border border-ember text-ember text-[11.5px] px-2.5 py-1.5 rounded-md leading-snug">
               {hoverLabel.L}
@@ -967,6 +1142,11 @@ export default function Building3D({ data: rawData, view }) {
           <div className="absolute top-2 left-2 z-30 pointer-events-none bg-[#0B1420]/85 border border-sage/50 text-sage text-[12px] font-semibold px-2.5 py-1 rounded-md">
             Optimized Design ✅
           </div>
+          {OPT_LABELS.map((l) => (
+            <span key={l.id} ref={(el) => { labelElsRef.current.R[l.id] = el; }}
+              className="absolute top-0 left-0 z-[25] pointer-events-none whitespace-nowrap bg-[#0B1420]/80 border border-sage/50 text-sage text-[10.5px] px-1.5 py-0.5 rounded"
+              style={{ opacity: 0, willChange: "transform" }}>{l.text}</span>
+          ))}
           {hoverLabel.R && (
             <div className="absolute bottom-12 left-2 right-2 z-30 pointer-events-none bg-[#0B1420] border border-sage text-sage text-[11.5px] px-2.5 py-1.5 rounded-md leading-snug">
               {hoverLabel.R}
