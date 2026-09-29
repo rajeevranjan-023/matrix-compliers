@@ -3,44 +3,39 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { Card } from "./Card";
 
 const PERSONA_LABELS = {
-  urban: "Urban housing", rural: "Rural housing", army: "Army / forward shelter",
-  "disaster-relief": "Disaster relief (tent/temporary)",
+  urban: "urban home", rural: "rural home", army: "army shelter",
+  "disaster-relief": "temporary relief tent",
 };
 
 export default function ComparisonPanel({ data }) {
   const { simulation, comparison, comfortScore, baselineScore, inputs } = data;
   const chartData = simulation.hours.map((h) => ({
     hour: `${h}:00`,
-    "Baseline indoor": simulation.baselineIndoor[h],
-    "Optimized indoor": simulation.optimizedIndoor[h],
+    "Normal building": simulation.baselineIndoor[h],
+    "Your design": simulation.optimizedIndoor[h],
   }));
 
-  const gainLabel = comparison.isCold ? "Night-time indoor temperature gain" : "Daytime peak temperature reduction";
   const gain = comparison.headlineGain;
   const bm = simulation.baselineMetrics;
   const om = simulation.optimizedMetrics;
 
   const rows = [
-    [gainLabel, `${gain >= 0 ? "+" : ""}${gain}°C`, gain >= 0 ? "text-sage" : "text-ember"],
-    ["Baseline night minimum", `${bm.min.toFixed(1)}°C`, ""],
-    ["Optimized night minimum", `${om.min.toFixed(1)}°C`, ""],
-    ["Indoor swing (baseline → optimized)", `${bm.swingIn.toFixed(1)}° → ${om.swingIn.toFixed(1)}°`, "text-sage"],
-    ["Heat retention (baseline → optimized)", `${Math.round(bm.retention)}% → ${Math.round(om.retention)}%`, "text-sage"],
-    ["Estimated conditioning energy saved", `${comparison.energySavingPercent}%`, "text-sage"],
-    ["Comfort score (baseline → optimized)", `${baselineScore.overall} → ${comfortScore.overall}`, "text-sage"],
+    [comparison.isCold ? "Warmer at night by" : "Cooler at peak heat by", `${gain >= 0 ? "+" : ""}${gain}°C`, gain >= 0 ? "text-sage" : "text-ember"],
+    ["Coldest point", `${bm.min.toFixed(1)}° → ${om.min.toFixed(1)}°`, ""],
+    ["Heat kept", `${Math.round(bm.retention)}% → ${Math.round(om.retention)}%`, ""],
+    ["Energy saved", `${comparison.energySavingPercent}%`, "text-sage"],
+    ["Comfort score", `${baselineScore.overall} → ${comfortScore.overall}`, ""],
   ];
 
   return (
     <div>
-      <h2 className="font-display text-xl font-semibold mb-1">Baseline vs optimized design</h2>
-      <p className="text-muted text-sm mb-5">
-        Baseline reflects a typical existing structure for the selected persona (
-        <b className="text-slate-300 font-normal">{PERSONA_LABELS[inputs.persona]}</b>) at the same floor area —
-        optimized is this engine's recommendation for your inputs.
+      <h2 className="text-[20px] font-semibold mb-1">Your design vs a normal building</h2>
+      <p className="text-muted text-[13.5px] mb-5 mt-0 max-w-2xl">
+        The "normal building" is a typical {PERSONA_LABELS[inputs.persona] || "building"} with the same floor area, built the usual way.
       </p>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
+      <div className="flex flex-col md:flex-row gap-4">
+        <Card className="md:flex-[3] pt-4 pb-2">
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={chartData}>
               <CartesianGrid stroke="#1a2738" />
@@ -48,17 +43,17 @@ export default function ComparisonPanel({ data }) {
               <YAxis tick={{ fill: "#8FA0B5", fontSize: 12 }} unit="°" />
               <Tooltip contentStyle={{ background: "#101C2C", border: "1px solid #22334A", fontSize: 13 }} />
               <Legend wrapperStyle={{ fontSize: 12, color: "#8FA0B5" }} />
-              <Bar dataKey="Baseline indoor" fill="#D46A3E" />
-              <Bar dataKey="Optimized indoor" fill="#E8934A" />
+              <Bar dataKey="Normal building" fill="#D46A3E" />
+              <Bar dataKey="Your design" fill="#E8934A" />
             </BarChart>
           </ResponsiveContainer>
         </Card>
 
-        <Card>
+        <Card className="md:flex-[2] self-start px-5 py-3">
           {rows.map(([label, val, tone]) => (
-            <div key={label} className="flex justify-between items-baseline gap-3 py-3 border-b border-line last:border-none">
+            <div key={label} className="flex justify-between items-baseline gap-3 py-2.5 border-b border-line last:border-none">
               <span className="text-muted text-[13.5px]">{label}</span>
-              <span className={`font-mono text-[15px] font-semibold whitespace-nowrap ${tone}`}>{val}</span>
+              <span className={`text-[15px] font-semibold whitespace-nowrap tabular-nums ${tone}`}>{val}</span>
             </div>
           ))}
         </Card>

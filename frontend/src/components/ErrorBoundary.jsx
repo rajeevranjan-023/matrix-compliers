@@ -21,8 +21,7 @@ export default class ErrorBoundary extends React.Component {
       return (
         this.props.fallback || (
           <div className="bg-panel border border-line rounded-xl p-5 text-center">
-            <div className="text-2xl mb-2">⚠️</div>
-            <p className="text-muted text-[13px]">This section couldn't load. The rest of the page is unaffected.</p>
+            <p className="text-muted text-[13px] m-0">Something went wrong loading this part. The rest of the page still works.</p>
           </div>
         )
       );

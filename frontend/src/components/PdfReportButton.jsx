@@ -42,8 +42,8 @@ export default function PdfReportButton({ data }) {
   }
   return (
     <button onClick={handleClick} disabled={!data}
-      className="flex items-center gap-1.5 bg-panel2 border border-line text-slate-100 rounded-lg px-3 py-2 text-[12px] hover:border-amber disabled:opacity-50">
-      📄 Download report
+      className="text-slate-200 text-[13px] px-3 py-2 hover:text-amber disabled:opacity-50">
+      Download report
     </button>
   );
 }

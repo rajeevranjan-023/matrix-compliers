@@ -7,8 +7,8 @@ export function Card({ children, className = "" }) {
 export function StatCard({ label, value, sub }) {
   return (
     <Card>
-      <h3 className="text-muted text-[13px] font-medium mb-1.5">{label}</h3>
-      <div className="font-mono text-[26px] font-bold">{value}</div>
+      <h3 className="text-muted text-[13px] mb-1.5">{label}</h3>
+      <div className="text-[24px] font-semibold tabular-nums">{value}</div>
       {sub && <div className="text-muted text-xs mt-1">{sub}</div>}
     </Card>
   );

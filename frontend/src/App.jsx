@@ -20,12 +20,14 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import ThermalStoragePage from "./components/ThermalStoragePage";
 
 const TABS = [
-  { id: "simulation", label: "Thermal Simulation" },
-  { id: "comfort", label: "Comfort Score" },
-  { id: "comparison", label: "Design Comparison" },
-  { id: "materials", label: "Materials & Cost" },
-  { id: "sustainability", label: "Sustainability" },
+  { id: "simulation", label: "Through the day" },
+  { id: "comfort", label: "Comfort" },
+  { id: "comparison", label: "Before vs after" },
+  { id: "materials", label: "Materials & cost" },
+  { id: "sustainability", label: "Energy & CO₂" },
 ];
+
+const VIEW_LABELS = { structure: "Building", thermal: "Heat map", airflow: "Air flow" };
 
 const DEFAULT_INPUTS = {
   location: "Leh, Ladakh",
@@ -42,7 +44,7 @@ const DEFAULT_INPUTS = {
 };
 
 export default function App() {
-  const [page, setPage] = useState("input"); // 'input' | 'output'
+  const [page, setPage] = useState("input")
   const [locations, setLocations] = useState([]);
   const [inputs, setInputs] = useState(DEFAULT_INPUTS);
   const [data, setData] = useState(null);
@@ -108,17 +110,13 @@ export default function App() {
   if (page === "input") {
     return (
       <div>
-        <header className="border-b border-line px-5 py-3.5 flex items-center justify-between flex-wrap gap-2.5">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2 h-2 rounded-full bg-amber shadow-[0_0_10px] shadow-amber" />
-            <div>
-              <h1 className="font-display text-[17px] font-semibold m-0">ShelterIQ</h1>
-            </div>
-          </div>
-
+        <header className="border-b border-line px-5 py-3">
+          <h1 className="text-[17px] font-semibold m-0">ShelterIQ</h1>
         </header>
         {error && (
-          <div className="max-w-4xl mx-auto mt-4 rounded-lg border border-ember/40 bg-ember/10 text-ember text-sm px-4 py-3">{error}</div>
+          <div className="max-w-4xl mx-5 md:mx-auto mt-4 rounded-lg border border-ember/40 bg-ember/10 text-ember text-sm px-4 py-3">
+            Couldn't make the design. {error}
+          </div>
         )}
 
         <InputPanel inputs={inputs} setInputs={setInputs} locations={locations} onGenerate={handleGenerate} loading={loading} />
@@ -126,42 +124,43 @@ export default function App() {
     );
   }
 
-
   return (
-    <div>
-      <header className="border-b border-line px-5 py-3.5 flex items-center justify-between flex-wrap gap-2.5">
-        <div className="flex items-center gap-2.5">
-          <span className="w-2 h-2 rounded-full bg-amber shadow-[0_0_10px] shadow-amber" />
-          <div>
-            <h1 className="font-display text-[17px] font-semibold m-0">ShelterIQ</h1>
-            <div className="text-muted text-[12px]">{data.location.name} · {inputs.widthM}m × {inputs.lengthM}m, {inputs.floors} floor{inputs.floors > 1 ? "s" : ""}</div>
-          </div>
+    <div className="settle">
+      <header className="border-b border-line px-5 py-3 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-[17px] font-semibold m-0">ShelterIQ</h1>
+          <div className="text-muted text-[12px]">{data.location.name} · {inputs.widthM}m × {inputs.lengthM}m, {inputs.floors} floor{inputs.floors > 1 ? "s" : ""}</div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => setPage("thermal-storage")} className="bg-amber text-[#1A1206] font-semibold rounded-lg px-3 py-2 text-[12px] hover:brightness-110">IMPORTANT :_ ☀️ Solar Heat Storage</button>
-          <button onClick={() => setCompareOpen(true)} className="bg-panel2 border border-line text-slate-100 rounded-lg px-3 py-2 text-[12px] hover:border-amber">Compare cities</button>
+        <div className="flex items-center gap-1 flex-wrap">
+          <button onClick={() => setPage("thermal-storage")} className="text-amber text-[13px] px-3 py-2 hover:underline">How solar heat storage works</button>
+          <button onClick={() => setCompareOpen(true)} className="text-slate-200 text-[13px] px-3 py-2 hover:text-amber">Compare with another city</button>
           <PdfReportButton data={data} />
-          <button onClick={() => setPage("input")} className="bg-panel2 border border-line text-slate-100 rounded-lg px-3 py-2 text-[12px] hover:border-amber">← Edit inputs</button>
+          <button onClick={() => setPage("input")} className="ml-1 bg-panel2 border border-line text-slate-100 rounded-lg px-4 py-2 text-[13px] hover:border-amber">← Change inputs</button>
         </div>
       </header>
 
-      <div className="max-w-[1600px] mx-auto p-4 space-y-4">
-        <SummaryCards data={data} />
+      <div className="max-w-[1500px] mx-auto px-4 pt-5 pb-10 space-y-6">
+        <div className={`transition-opacity duration-300 ${updating ? "opacity-60" : "opacity-100"}`}>
+          <SummaryCards data={data} />
+        </div>
 
-        <div className="flex flex-col lg:flex-row gap-4">
-          <div className="lg:flex-[7] flex flex-col gap-3">
-            <div className="flex bg-panel2 border border-line rounded-lg p-[3px] gap-[3px] w-fit">
-              {["structure", "thermal", "airflow"].map((v) => (
-                <button key={v} onClick={() => setView(v)}
-                  className={`px-3.5 py-1.5 rounded-md text-[12px] ${view === v ? "bg-glacier text-ink font-semibold" : "text-muted"}`}>
-                  {v === "structure" ? "Structure" : v === "thermal" ? "Thermal (heat map)" : "Airflow"}
-                </button>
-              ))}
+        <div className="flex flex-col lg:flex-row gap-5">
+          <div className="lg:flex-[7] flex flex-col gap-2">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex bg-panel2 border border-line rounded-lg p-[3px] gap-[3px] w-fit">
+                {["structure", "thermal", "airflow"].map((v) => (
+                  <button key={v} onClick={() => setView(v)}
+                    className={`px-3.5 py-1.5 rounded-md text-[12.5px] ${view === v ? "bg-glacier text-ink font-semibold" : "text-muted hover:text-slate-200"}`}>
+                    {VIEW_LABELS[v]}
+                  </button>
+                ))}
+              </div>
+              <span className="text-muted text-[12px]">Drag the model to look around it.</span>
             </div>
             <div className="h-[640px]"><ErrorBoundary resetKey={data}><Building3D data={data} view={view} /></ErrorBoundary></div>
           </div>
-          <div className="lg:flex-[3] bg-panel border border-line rounded-xl p-4">
-            <h3 className="text-muted text-[11px] uppercase tracking-wide font-medium mb-3">Key metrics</h3>
+          <div className={`lg:flex-[3] self-start bg-panel border border-line rounded-xl px-4 pt-3 pb-4 transition-opacity duration-300 ${updating ? "opacity-60" : "opacity-100"}`}>
+            <h3 className="text-[14px] font-semibold mb-3">The numbers</h3>
             <ErrorBoundary resetKey={data}><MinimalMetrics data={data} /></ErrorBoundary>
           </div>
         </div>
@@ -171,25 +170,28 @@ export default function App() {
 
         <div>
           <Tabs tabs={TABS} active={tab} onChange={setTab} />
-          <div className="pt-5">
-            <ErrorBoundary resetKey={`${tab}-${data ? 1 : 0}`}>
-              {tab === "simulation" && <SimulationChart data={data} />}
-              {tab === "comfort" && <ComfortScore data={data} />}
-              {tab === "comparison" && <ComparisonPanel data={data} />}
-              {tab === "materials" && <MaterialTable data={data} />}
-              {tab === "sustainability" && <SustainabilityPanel data={data} />}
-            </ErrorBoundary>
+          <div className="pt-6" key={tab}>
+            <div className="settle">
+              <ErrorBoundary resetKey={`${tab}-${data ? 1 : 0}`}>
+                {tab === "simulation" && <SimulationChart data={data} />}
+                {tab === "comfort" && <ComfortScore data={data} />}
+                {tab === "comparison" && <ComparisonPanel data={data} />}
+                {tab === "materials" && <MaterialTable data={data} />}
+                {tab === "sustainability" && <SustainabilityPanel data={data} />}
+              </ErrorBoundary>
+            </div>
           </div>
         </div>
       </div>
 
-      <Modal open={compareOpen} onClose={() => setCompareOpen(false)} title="Multi-location compare">
+      <Modal open={compareOpen} onClose={() => setCompareOpen(false)} title="Compare with another city">
+        <p className="text-muted text-[13px] mb-3">Same building, different weather. Pick a city to see how it changes.</p>
         <select
           value={compareLocation || ""}
           onChange={(e) => handleCompare(e.target.value || null)}
-          className="w-full bg-panel2 border border-line rounded-lg px-3 py-2.5 text-[13.5px] mb-4"
+          className="w-full bg-panel2 border border-line rounded-lg px-3 py-2.5 text-[13.5px] mb-5"
         >
-          <option value="">— choose a second location —</option>
+          <option value="">Choose a city…</option>
           {locations.filter((l) => l.name !== inputs.location).map((l) => <option key={l.name} value={l.name}>{l.name}</option>)}
         </select>
         <MultiLocationPanel data={data} compareData={compareData} />

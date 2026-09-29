@@ -1,23 +1,28 @@
 import React from "react";
-import { Card, StatCard } from "./Card";
 
 export default function SustainabilityPanel({ data }) {
   const { sustainability } = data;
   return (
     <div>
-      <h2 className="font-display text-xl font-semibold mb-1">Sustainability &amp; energy impact</h2>
-      <p className="text-muted text-sm mb-5">
-        Derived directly from the simulated heat-loss rate × degree-hours, not from an arbitrary scale.
+      <h2 className="text-[20px] font-semibold mb-3">Energy and CO₂</h2>
+      <p className="text-[16px] leading-relaxed max-w-2xl mt-0 mb-6">
+        A normal building would need about <b>{sustainability.baseKWh} kWh</b> a day for heating or cooling. Yours needs about <b>{sustainability.optKWh} kWh</b>.
+        That's <b className="text-sage">{sustainability.savedKWh} kWh saved</b> every day, which is roughly <b className="text-sage">{sustainability.co2SavedKg} kg of CO₂</b> not released.
       </p>
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard label="Baseline load / day" value={`${sustainability.baseKWh} kWh`} />
-        <StatCard label="Optimized load / day" value={`${sustainability.optKWh} kWh`} />
-        <Card><h3 className="text-muted text-[13px] font-medium mb-1.5">Saved / day</h3><div className="text-[26px] font-mono font-bold text-sage">{sustainability.savedKWh} kWh</div></Card>
-        <Card><h3 className="text-muted text-[13px] font-medium mb-1.5">CO₂ avoided / day</h3><div className="text-[26px] font-mono font-bold text-sage">{sustainability.co2SavedKg} kg</div></Card>
+
+      <div className="flex flex-wrap gap-x-10 gap-y-3 px-1">
+        <div>
+          <div className="text-[24px] font-semibold text-sage tabular-nums">{sustainability.savedKWh} kWh</div>
+          <div className="text-muted text-[13px]">saved per day</div>
+        </div>
+        <div>
+          <div className="text-[24px] font-semibold text-sage tabular-nums">{sustainability.co2SavedKg} kg</div>
+          <div className="text-muted text-[13px]">CO₂ avoided per day</div>
+        </div>
       </div>
-      <p className="text-muted text-xs mt-3 leading-relaxed">
-        CO₂ conversion assumes {sustainability.co2Factor} kg CO₂/kWh (approximate India grid average) — a stated
-        assumption, not a measured figure. This is a per-simulated-day estimate, not an annualised audit number.
+
+      <p className="text-muted text-[12px] mt-6 leading-relaxed max-w-2xl">
+        We assumed {sustainability.co2Factor} kg of CO₂ per kWh, which is close to India's average. Treat these as rough daily estimates, not a full yearly audit.
       </p>
     </div>
   );

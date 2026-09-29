@@ -6,18 +6,16 @@ export default function SmartSuggestions({ data }) {
   const allGood = suggestions.length === 1 && suggestions[0].toLowerCase().startsWith("design parameters are well matched");
 
   return (
-    <div className="bg-panel border border-line rounded-xl p-4">
-      <h3 className="font-display text-[15px] font-semibold mb-3">
-        {allGood ? "You're in good shape" : "Ways to make it better"}
+    <div className="border-l-2 border-amber pl-5 py-1">
+      <h3 className="text-[16px] font-semibold mb-2 mt-0">
+        {allGood ? "This already looks good" : "Things you could try"}
       </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <ul className="list-none m-0 p-0 space-y-1.5 max-w-3xl">
         {suggestions.map((s, i) => (
-          <div key={i} className="flex gap-2.5 bg-panel2 border border-line rounded-lg px-3 py-2.5">
-            <span className="text-[15px] leading-none mt-0.5">{allGood ? "✅" : "💡"}</span>
-            <p className="text-[13px] text-slate-200 leading-snug m-0">{s}</p>
-          </div>
+          <li key={i} className="text-[13.5px] text-slate-200 leading-relaxed">{s}</li>
         ))}
-      </div>
+      </ul>
+      {!allGood && <p className="text-muted text-[12px] mt-2.5 mb-0">You can change these anytime with the "Tweak it" panel on the right.</p>}
     </div>
   );
 }

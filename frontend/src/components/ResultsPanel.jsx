@@ -91,7 +91,6 @@ export default function ResultsPanel({ data }) {
         </div>
       </Card>
 
-      {/* Suggestions */}
       {suggestions?.length > 0 && (
         <Card className="mb-3">
           <h3 className="text-muted text-[11.5px] uppercase tracking-wide font-medium mb-2">
@@ -115,7 +114,6 @@ export default function ResultsPanel({ data }) {
         </Card>
       )}
 
-      {/* Heatwave */}
       {inputs?.special?.heatwave && (
         <Card className="mb-3">
           <h3 className="text-muted text-[11.5px] font-medium mb-2">

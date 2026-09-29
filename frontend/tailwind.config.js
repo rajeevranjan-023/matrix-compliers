@@ -15,7 +15,7 @@ export default {
         sage: "#79A88E",
       },
       fontFamily: {
-        display: ["Space Grotesk", "sans-serif"],
+        display: ["Inter", "sans-serif"],
         body: ["Inter", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"],
       },
