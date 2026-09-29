@@ -1,23 +1,23 @@
 import React from "react";
 
 const FIELDS = [
-  { key: "orientation", title: "Orientation", icon: "🧭" },
-  { key: "wallThickness", title: "Wall construction", icon: "🧱" },
-  { key: "windowPlacement", title: "Window placement", icon: "🪟" },
-  { key: "roofDesign", title: "Roof design", icon: "🏠" },
+  { key: "orientation", title: "Orientation", icon: "" },
+  { key: "wallThickness", title: "Wall construction", icon: "" },
+  { key: "windowPlacement", title: "Window placement", icon: "" },
+  { key: "roofDesign", title: "Roof design", icon: "" },
 ];
 
 const COLD_EXTRAS = [
-  { icon: "☀️", title: "Trombe wall or sunspace", text: "A glass-fronted dark wall on the south side collects heat during the day and stores it for the evening." },
-  { icon: "🚪", title: "Double-door entry", text: "Two doors with a small space between them keep cold air from rushing in." },
-  { icon: "⬛", title: "Dark interior surfaces", text: "Dark floors and walls behind the glass soak up sunlight and hold on to the warmth." },
-  { icon: "🌙", title: "Insulated shutters", text: "Shutters close at sunset to trap the heat inside." },
+  { icon: "", title: "Trombe wall or sunspace", text: "A glass-fronted dark wall on the south side collects heat during the day and stores it for the evening." },
+  { icon: "", title: "Double-door entry", text: "Two doors with a small space between them keep cold air from rushing in." },
+  { icon: "", title: "Dark interior surfaces", text: "Dark floors and walls behind the glass soak up sunlight and hold on to the warmth." },
+  { icon: "", title: "Insulated shutters", text: "Shutters close at sunset to trap the heat inside." },
 ];
 
 const HOT_EXTRAS = [
-  { icon: "☂️", title: "Shading over openings", text: "Deep overhangs keep the hot sun off the glass and walls." },
-  { icon: "💨", title: "Night airing", text: "Windows open after dark so the cool night air can flush the day's heat out." },
-  { icon: "⬜", title: "Light-coloured roof", text: "A pale roof bounces sunlight away instead of soaking it up." },
+  { icon: "", title: "Shading over openings", text: "Deep overhangs keep the hot sun off the glass and walls." },
+  { icon: "", title: "Night airing", text: "Windows open after dark so the cool night air can flush the day's heat out." },
+  { icon: "", title: "Light-coloured roof", text: "A pale roof bounces sunlight away instead of soaking it up." },
 ];
 
 export default function WhyDesignSection({ data }) {

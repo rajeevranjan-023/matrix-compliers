@@ -17,6 +17,7 @@ import MultiLocationPanel from "./components/MultiLocationPanel";
 import PdfReportButton from "./components/PdfReportButton";
 import Modal from "./components/Modal";
 import ErrorBoundary from "./components/ErrorBoundary";
+import ThermalStoragePage from "./components/ThermalStoragePage";
 
 const TABS = [
   { id: "simulation", label: "Thermal Simulation" },
@@ -100,19 +101,26 @@ export default function App() {
     try { setCompareData(await generateDesign(payload)); } catch { setCompareData(null); }
   }
 
+  if (page === "thermal-storage") {
+    return <ThermalStoragePage onBack={() => setPage(data ? "output" : "input")} />;
+  }
+
   if (page === "input") {
     return (
       <div>
-        <header className="border-b border-line px-5 py-3.5 flex items-center gap-2.5">
-          <span className="w-2 h-2 rounded-full bg-amber shadow-[0_0_10px] shadow-amber" />
-          <div>
-            <h1 className="font-display text-[17px] font-semibold m-0">ShelterIQ</h1>
-            <div className="text-muted text-[12px]">Climate-Adaptive Smart Shelter Design Platform</div>
+        <header className="border-b border-line px-5 py-3.5 flex items-center justify-between flex-wrap gap-2.5">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2 h-2 rounded-full bg-amber shadow-[0_0_10px] shadow-amber" />
+            <div>
+              <h1 className="font-display text-[17px] font-semibold m-0">ShelterIQ</h1>
+            </div>
           </div>
+
         </header>
         {error && (
           <div className="max-w-4xl mx-auto mt-4 rounded-lg border border-ember/40 bg-ember/10 text-ember text-sm px-4 py-3">{error}</div>
         )}
+
         <InputPanel inputs={inputs} setInputs={setInputs} locations={locations} onGenerate={handleGenerate} loading={loading} />
       </div>
     );
@@ -130,6 +138,7 @@ export default function App() {
           </div>
         </div>
         <div className="flex gap-2">
+          <button onClick={() => setPage("thermal-storage")} className="bg-amber text-[#1A1206] font-semibold rounded-lg px-3 py-2 text-[12px] hover:brightness-110">IMPORTANT :_ ☀️ Solar Heat Storage</button>
           <button onClick={() => setCompareOpen(true)} className="bg-panel2 border border-line text-slate-100 rounded-lg px-3 py-2 text-[12px] hover:border-amber">Compare cities</button>
           <PdfReportButton data={data} />
           <button onClick={() => setPage("input")} className="bg-panel2 border border-line text-slate-100 rounded-lg px-3 py-2 text-[12px] hover:border-amber">← Edit inputs</button>

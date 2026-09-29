@@ -20,8 +20,7 @@ const CLIMATE_DB = {
 
 function classifyClimate(d) {
   if (d.winterAvg <= 3 && d.diurnal >= 15 && d.humidity < 35)
-    return { key: "cold-arid", label: "Cold & Arid (High-Altitude Desert)", badge:"cold",
-      note:"Ladakh-type climate: strongest case for passive solar + thermal mass design." };
+    return {  };
   if (d.winterAvg <= 6)
     return { key: "cold-temperate", label: "Cold Temperate (Himalayan)", badge:"cold",
       note:"Snow-season cold with higher ambient humidity than a cold desert." };

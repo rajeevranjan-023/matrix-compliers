@@ -1,8 +1,8 @@
 import React from "react";
 
 const CLIMATE_TALK = {
-  "cold-arid": "Cold climate", "cold-temperate": "Cold climate",
-  "hot-dry": "Hot & dry climate", "hot-humid": "Hot & humid climate", composite: "Mixed climate",
+
+
 };
 
 function Pill({ tone = "muted", children }) {
@@ -44,11 +44,8 @@ export default function SummaryCards({ data }) {
     <div>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <Pill tone="muted">{CLIMATE_TALK[classification.key] || classification.label}</Pill>
-        {inputs.special?.snow && <Pill tone="muted">❄️ Snow conditions</Pill>}
-        {inputs.special?.heatwave && <Pill tone="ember">🔥 Heatwave conditions</Pill>}
-        {inputs.special?.wind && <Pill tone="muted">💨 High wind</Pill>}
         <span className="text-muted text-[12px]">
-          Your optimized design is <b className="text-sage">{Math.abs(comparison.headlineGain)}°C {gainWord}</b> than a typical build for this spot.
+          Your optimized design is <b className="text-sage">{Math.abs(comparison.headlineGain)}°C {gainWord}</b> than a normal buildings .
         </span>
       </div>
       <div className="flex flex-wrap gap-3">

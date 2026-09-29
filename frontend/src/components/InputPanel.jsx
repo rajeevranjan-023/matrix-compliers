@@ -94,7 +94,6 @@ export default function InputPanel({ inputs, setInputs, locations, onGenerate, l
     <div className="max-w-4xl mx-auto p-5">
       <div className="mb-6">
         <h1 className="font-display text-2xl font-semibold mb-1">Design your shelter</h1>
-        <p className="text-muted text-sm">Fill in the brief below, then generate a climate-optimized 3D design.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -225,7 +224,7 @@ export default function InputPanel({ inputs, setInputs, locations, onGenerate, l
           </Field>
           <Field label="Special / extreme conditions">
             <div className="flex flex-col gap-2">
-              {[["snow", "❄️ Snow loading"], ["wind", "🌪️ High wind exposure"], ["coastal", "🌊 Coastal / salt air"], ["heatwave", "🔥 Include heatwave stress-test"]].map(([key, label]) => (
+              {[["snow", " Snow loading"], ["wind", " High wind exposure"], ["coastal", "Coastal / salt air"], ["heatwave", " Include heatwave stress-test"]].map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 text-[13px]">
                   <input type="checkbox" checked={!!inputs.special[key]} onChange={(e) => setSpecial({ [key]: e.target.checked })} className="accent-amber w-[15px] h-[15px]" />
                   {label}
