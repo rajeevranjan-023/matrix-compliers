@@ -132,9 +132,7 @@ export default function App() {
           <div className="text-muted text-[12px]">{data.location.name} · {inputs.widthM}m × {inputs.lengthM}m, {inputs.floors} floor{inputs.floors > 1 ? "s" : ""}</div>
         </div>
         <div className="flex items-center gap-1 flex-wrap">
-          <button onClick={() => setPage("thermal-storage")} className="text-amber text-[13px] px-3 py-2 hover:underline">How solar heat storage works</button>
-          <button onClick={() => setCompareOpen(true)} className="text-slate-200 text-[13px] px-3 py-2 hover:text-amber">Compare with another city</button>
-          <PdfReportButton data={data} />
+          <button onClick={() => setPage("thermal-storage")} className="bg-amber text-[#fcfbf9] font-semibold rounded-lg px-7 py-3 text-[14.5px] hover:brightness-110 disabled:opacity-60" fdprocessedid="euqa7">2nd** Thermal storage system : design</button>
           <button onClick={() => setPage("input")} className="ml-1 bg-panel2 border border-line text-slate-100 rounded-lg px-4 py-2 text-[13px] hover:border-amber">← Change inputs</button>
         </div>
       </header>
