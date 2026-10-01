@@ -48,17 +48,24 @@ export default function ThermalStoragePage({ onBack }) {
         <p className="text-[19px] leading-snug text-slate-100 mt-0 mb-9">
           The idea is simple: catch the sun's heat during the day, keep it in a tank of water, and use it at night when it's actually cold.
         </p>
+<Part title={
+  <span className="bg-orange-500/10 text-orange-400 px-3 py-1 rounded-md border border-orange-400/30">
+    The problem
+  </span>
+} className="mb-8">
+  <p className={para}>
+    In places like Ladakh the sun is strong in the day, but nights get very cold. Most people heat their homes with fuel, and fuel is expensive and hard to bring up there.
+  </p>
+  <p className={`${para} mb-0`}>
+    So instead of burning something, we use the sun that's already there.
+  </p>
+</Part>
 
-        <Part title="The problem" className="mb-8">
-          <p className={para}>
-            In places like Ladakh the sun is strong in the day, but nights get very cold. Most people heat their homes with fuel, and fuel is expensive and hard to bring up there.
-          </p>
-          <p className={`${para} mb-0`}>
-            So instead of burning something, we use the sun that's already there.
-          </p>
-        </Part>
-
-        <Part title="During the day" className="mb-8">
+<Part  title={
+  <span className="bg-orange-500/10 text-orange-400 px-3 py-1 rounded-md border border-orange-400/30">
+    During the day
+  </span>
+} className="mb-8">
           <p className={para}>
             A solar collector faces south, tilted to match the sun. Sunlight hits a dark plate inside it, the plate heats up, and that heat goes into water running through pipes.
           </p>
@@ -69,7 +76,10 @@ export default function ThermalStoragePage({ onBack }) {
           </div>
         </Part>
 
-        <Part title="Keeping the heat" className="mb-8">
+        <Part title={
+  <span className="bg-orange-500/10 text-orange-400 px-3 py-1 rounded-md border border-orange-400/30">
+    Keeping the heat
+  </span>} className="mb-8">
           <p className={para}>
             The hot water goes into an insulated tank, usually steel with a thick layer of foam or fibre around it. Done well, the tank only loses about 5 to 10°C overnight.
           </p>
@@ -85,7 +95,10 @@ export default function ThermalStoragePage({ onBack }) {
           </ul>
         </Part>
 
-        <Part title="At night" className="mb-8">
+        <Part title={
+  <span className="bg-orange-500/10 text-orange-400 px-3 py-1 rounded-md border border-orange-400/30">
+    At night
+  </span>} className="mb-8">
           <p className={para}>
             When it drops below freezing outside, the stored hot water gives its heat to the room. It cools a little, flows back to the tank, and the loop keeps going.
           </p>
@@ -107,7 +120,10 @@ export default function ThermalStoragePage({ onBack }) {
           </div>
         </div>
 
-        <Part title="A day in the life" className="mb-8">
+        <Part  title={
+  <span className="bg-orange-500/10 text-orange-400 px-3 py-1 rounded-md border border-orange-400/30">
+    A day in the life
+  </span>} className="mb-8">
           <Flow steps={["Morning: the sun starts heating the water", "Afternoon: the tank is at its hottest", "Evening: the heat is ready", "Night: it warms the room"]} />
         </Part>
 
